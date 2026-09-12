@@ -1,0 +1,57 @@
+name: endingletter
+description: "Ending Letter - A word-chain game with offline dictionary, cloud sync, and LAN multiplayer."
+publish_to: 'none'
+version: 1.6.0+3
+
+environment:
+  sdk: ^3.10.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.2.1
+  shared_preferences: ^2.3.2
+  flutter_animate: ^4.5.0
+  intl: ^0.19.0
+  http: ^1.6.0
+
+  # ── Stockage local (Phase 1) ──
+  sqflite: ^2.4.1
+  path_provider: ^2.1.5
+  path: ^1.9.0
+
+  # ── Utilitaires (Phase 1 + 2) ──
+  crypto: ^3.0.6            # SHA-256 pour versionner la wordlist
+  archive: ^3.6.1           # gzip wordlist
+  connectivity_plus: ^6.1.0 # online/offline
+
+  # ── Cloud sync (Phase 2) ──
+  firebase_core: ^3.6.0
+  firebase_auth: ^5.3.1
+  cloud_firestore: ^5.4.4
+  firebase_storage: ^12.3.4
+
+  # ── LAN multiplayer (Phase 3) ──
+  # Découverte via UDP broadcast brut (cf. lib/lan/lan_discovery.dart) :
+  # pas de dépendance externe, fonctionne Wi-Fi et hotspot direct.
+
+  # ── Polish (Phase 4) ──
+  audioplayers: ^6.1.0
+  uuid: ^4.5.1
+  provider: ^6.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  sqflite_common_ffi: ^2.3.4   # tests SQLite in-memory
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/dictionary/enable_seed.txt.gz
+    - assets/categories/enable_categories.json
+    - assets/sounds/submit.wav
+    - assets/sounds/error.wav
+    - assets/sounds/win.wav
