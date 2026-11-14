@@ -135,12 +135,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // Jeu vedette du jour (ex: UNO ou Solitaire)
     final heroGame = _games.firstWhere((g) => g.id == 27, orElse: () => _games.first);
+    final screenWidth = MediaQuery.of(context).size.width;
+    final int crossAxisCount = screenWidth > 900 ? 4 : (screenWidth > 600 ? 3 : 2);
 
     return SafeArea(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Barre supérieure responsive
+      child: CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Barre supérieure responsive
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Row(
@@ -470,37 +475,48 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-          // Grille des jeux
-          Expanded(
-            child: filteredGames.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.search_off, size: 48, color: Colors.white24),
-                        const SizedBox(height: 10),
-                        Text(
-                          _filterFavoritesOnly ? 'Aucun jeu dans vos favoris pour l\'instant !' : 'Aucun jeu ne correspond à votre recherche',
-                          style: const TextStyle(color: Colors.white54, fontSize: 13),
-                        ),
-                      ],
-                    ),
-                  )
-                : GridView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      childAspectRatio: 0.86,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
-                    ),
-                    itemCount: filteredGames.length,
-                    itemBuilder: (ctx, idx) {
-                      final game = filteredGames[idx];
-                      return _buildGameCard(game, favIds.contains(game.id));
-                    },
-                  ),
+              ],
+            ),
           ),
+          const SliverToBoxAdapter(
+            child: SizedBox(height: 8),
+          ),
+          if (filteredGames.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.search_off, size: 48, color: Colors.white24),
+                    const SizedBox(height: 10),
+                    Text(
+                      _filterFavoritesOnly ? 'Aucun jeu dans vos favoris pour l\'instant !' : 'Aucun jeu ne correspond à votre recherche',
+                      style: const TextStyle(color: Colors.white54, fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              sliver: SliverGrid(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: crossAxisCount,
+                  childAspectRatio: 0.86,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  (ctx, idx) {
+                    final game = filteredGames[idx];
+                    return _buildGameCard(game, favIds.contains(game.id));
+                  },
+                  childCount: filteredGames.length,
+                ),
+              ),
+            ),
         ],
       ),
     );

@@ -5,6 +5,11 @@ import 'car_models.dart';
 
 enum GearShifter { park, reverse, neutral, drive }
 
+enum ParkingCameraView {
+  cockpit,    // Vue Intérieure Cockpit avec Volant & Caméra de Recul
+  isometric,  // Vue 3D Extérieure / Caméra Aérienne de Stationnement
+}
+
 class DrParkingView extends StatefulWidget {
   final RacingVehicle vehicle;
   final VoidCallback onLevelComplete;
@@ -31,6 +36,7 @@ class _DrParkingViewState extends State<DrParkingView> with SingleTickerProvider
   double _steeringAngle = 0.0; // -1.0 (gauche) à +1.0 (droite)
 
   GearShifter _gear = GearShifter.drive;
+  ParkingCameraView _cameraView = ParkingCameraView.cockpit; // Par défaut vue cockpit avec caméra de recul
   bool _isAccelerating = false;
   bool _isBraking = false;
   int _collisionCount = 0;
@@ -99,38 +105,47 @@ class _DrParkingViewState extends State<DrParkingView> with SingleTickerProvider
       _carX += math.cos(_carAngle) * _speed * dt;
       _carY += math.sin(_carAngle) * _speed * dt;
 
-      // Limites du parking
-      _carX = _carX.clamp(0.06, 0.94);
+      // Limites de l'arène de parking
+      _carX = _carX.clamp(0.08, 0.92);
       _carY = _carY.clamp(0.08, 0.92);
 
-      // 3. Détection de proximité des obstacles
-      final carRect = Rect.fromCenter(center: Offset(_carX, _carY), width: 0.10, height: 0.16);
+      // 3. Détection des obstacles et capteurs de recul / proximité
       double minObstacleDist = 999.0;
+      final carPoint = Offset(_carX, _carY);
 
       for (final obs in _obstacles) {
-        if (carRect.overlaps(obs)) {
-          // Collision !
-          _speed = -_speed * 0.5;
+        final dist = (obs.center - carPoint).distance;
+        if (dist < minObstacleDist) minObstacleDist = dist;
+
+        // Collision physique
+        if (obs.contains(carPoint)) {
+          _speed = -_speed * 0.5; // Rebond
           _collisionCount++;
           FeedbackService.triggerImpact();
           break;
         }
-        final dist = (Offset(_carX, _carY) - obs.center).distance;
-        minObstacleDist = math.min(minObstacleDist, dist);
       }
 
-      _proximityAlarm = (1.0 - (minObstacleDist / 0.25)).clamp(0.0, 1.0);
+      _proximityAlarm = (1.0 - (minObstacleDist / 0.35)).clamp(0.0, 1.0);
 
-      // 4. Détection du stationnement parfait
-      final inSlot = _parkingSlot.contains(Offset(_carX, _carY));
-      final isStopped = _speed.abs() < 0.01;
-      final isWellAligned = (_carAngle + math.pi / 2).abs() < 0.25 || (_carAngle - 3 * math.pi / 2).abs() < 0.25;
-
-      if (inSlot && isStopped && isWellAligned && _gear == GearShifter.park) {
-        _isParked = true;
-        FeedbackService.triggerSuccess();
-        widget.onLevelComplete();
+      // 4. Détection du stationnement parfait dans la place
+      if (_parkingSlot.contains(carPoint)) {
+        final angleDiff = (_carAngle - (-math.pi / 2)).abs();
+        if (_speed.abs() < 0.02 && _gear == GearShifter.park && angleDiff < 0.35) {
+          _isParked = true;
+          FeedbackService.triggerSuccess();
+          widget.onLevelComplete();
+        }
       }
+    });
+  }
+
+  void _cycleCamera() {
+    FeedbackService.triggerSelection();
+    setState(() {
+      _cameraView = _cameraView == ParkingCameraView.cockpit
+          ? ParkingCameraView.isometric
+          : ParkingCameraView.cockpit;
     });
   }
 
@@ -138,18 +153,16 @@ class _DrParkingViewState extends State<DrParkingView> with SingleTickerProvider
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Arène de Parking (Canvas 2D avec vue du dessus réaliste)
+        // Arène de Parking Haute Résolution
         Expanded(
-          flex: 5,
+          flex: 6,
           child: Container(
-            margin: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
             decoration: BoxDecoration(
-              color: const Color(0xFF141926),
+              color: const Color(0xFF0F1520),
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.white24, width: 2),
-              boxShadow: [
-                BoxShadow(color: Colors.black.withValues(alpha: 0.6), blurRadius: 16),
-              ],
+              border: Border.all(color: Colors.white24),
+              boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 16)],
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(18),
@@ -163,69 +176,122 @@ class _DrParkingViewState extends State<DrParkingView> with SingleTickerProvider
                       carX: _carX,
                       carY: _carY,
                       carAngle: _carAngle,
+                      steeringAngle: _steeringAngle,
                       vehicleColor: widget.vehicle.primaryColor,
+                      cameraView: _cameraView,
+                      gear: _gear,
+                      speed: _speed,
+                      proximityAlarm: _proximityAlarm,
                     ),
                   ),
 
-                  // Télémetrie & Chocs HUD
+                  // HUD Radar de Recul Supérieur & Bouton Caméra
                   Positioned(
                     top: 10,
                     left: 12,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.6),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.white24),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            _collisionCount > 0 ? Icons.car_crash : Icons.shield_outlined,
-                            size: 14,
-                            color: _collisionCount > 0 ? Colors.amberAccent : const Color(0xFF00FFCC),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            'Chocs : $_collisionCount',
-                            style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  // Alarme de proximité radar HUD
-                  if (_proximityAlarm > 0.3)
-                    Positioned(
-                      top: 10,
-                      left: 0,
-                      right: 0,
-                      child: Center(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                    right: 12,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        // Alerte Proximité Radar
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFFF0055).withValues(alpha: 0.8),
-                            borderRadius: BorderRadius.circular(20),
+                            color: Colors.black87,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: _proximityAlarm > 0.7
+                                  ? const Color(0xFFFF0055)
+                                  : (_proximityAlarm > 0.3 ? const Color(0xFFFFD166) : const Color(0xFF00FFCC)),
+                            ),
                           ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
+                          child: Row(
                             children: [
-                              Icon(Icons.warning_amber_rounded, color: Colors.white, size: 16),
-                              SizedBox(width: 6),
-                              Text('RADAR DE RECUL : OBSTACLE PROCHE', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                              Icon(
+                                Icons.sensors,
+                                color: _proximityAlarm > 0.7
+                                    ? const Color(0xFFFF0055)
+                                    : (_proximityAlarm > 0.3 ? const Color(0xFFFFD166) : const Color(0xFF00FFCC)),
+                                size: 16,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                _proximityAlarm > 0.8
+                                    ? 'STOP ! DANGER'
+                                    : (_proximityAlarm > 0.3 ? 'RADAR: PROCHE' : 'RADAR: DÉGAGÉ'),
+                                style: TextStyle(
+                                  color: _proximityAlarm > 0.7 ? const Color(0xFFFF0055) : Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 11,
+                                ),
+                              ),
                             ],
                           ),
                         ),
-                      ),
-                    ),
 
-                  // Succès Parking validé
+                        // Switcher Caméra (Cockpit / Vue Aérienne 3D)
+                        GestureDetector(
+                          onTap: _cycleCamera,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFF1E2842), Color(0xFF10172D)],
+                              ),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: const Color(0xFF00FFCC), width: 1.5),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _cameraView == ParkingCameraView.cockpit ? Icons.airline_seat_recline_extra : Icons.videocam,
+                                  color: const Color(0xFF00FFCC),
+                                  size: 15,
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  _cameraView == ParkingCameraView.cockpit ? 'VUE : COCKPIT' : 'VUE : EXTÉRIEUR',
+                                  style: const TextStyle(
+                                    color: Color(0xFF00FFCC),
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 11,
+                                    letterSpacing: 0.6,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+
+                        // Compteur d'accrochages
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: Colors.black87,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.white24),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.warning_amber, color: Color(0xFFFF9F1C), size: 15),
+                              const SizedBox(width: 4),
+                              Text(
+                                'CHOCS : $_collisionCount',
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Succès du Créneau Parfait
                   if (_isParked)
                     Center(
                       child: Container(
-                        padding: const EdgeInsets.all(20),
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                         decoration: BoxDecoration(
                           color: const Color(0xFF0F2618),
                           borderRadius: BorderRadius.circular(20),
@@ -253,7 +319,7 @@ class _DrParkingViewState extends State<DrParkingView> with SingleTickerProvider
         Expanded(
           flex: 4,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
             color: const Color(0xFF0A0E1A),
             child: Row(
               children: [
@@ -270,14 +336,13 @@ class _DrParkingViewState extends State<DrParkingView> with SingleTickerProvider
                           });
                         },
                         onPanEnd: (_) {
-                          // Retour automatique au centre
                           setState(() => _steeringAngle = 0.0);
                         },
                         child: Transform.rotate(
                           angle: _steeringAngle * 1.5,
                           child: Container(
-                            width: 110,
-                            height: 110,
+                            width: 104,
+                            height: 104,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               gradient: const RadialGradient(
@@ -291,34 +356,34 @@ class _DrParkingViewState extends State<DrParkingView> with SingleTickerProvider
                             child: Stack(
                               alignment: Alignment.center,
                               children: [
-                                const Icon(Icons.circle_outlined, color: Colors.white24, size: 70),
+                                const Icon(Icons.circle_outlined, color: Colors.white24, size: 68),
                                 Container(
                                   width: 14,
                                   height: 14,
                                   decoration: const BoxDecoration(color: Color(0xFF00FFCC), shape: BoxShape.circle),
                                 ),
                                 Positioned(
-                                  top: 10,
-                                  child: Container(width: 6, height: 16, color: Colors.amberAccent),
+                                  top: 8,
+                                  child: Container(width: 6, height: 14, color: Colors.amberAccent),
                                 ),
                               ],
                             ),
                           ),
                         ),
                       ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 4),
                       const Text('GLISSEZ LE VOLANT', style: TextStyle(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold)),
                     ],
                   ),
                 ),
 
-                const SizedBox(width: 12),
+                const SizedBox(width: 10),
 
                 // 2. Boîte de vitesses PRND (Gear Shifter)
                 Expanded(
                   flex: 3,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                    padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
                     decoration: BoxDecoration(
                       color: const Color(0xFF13192B),
                       borderRadius: BorderRadius.circular(16),
@@ -336,7 +401,7 @@ class _DrParkingViewState extends State<DrParkingView> with SingleTickerProvider
                   ),
                 ),
 
-                const SizedBox(width: 14),
+                const SizedBox(width: 12),
 
                 // 3. Pédales de Frein et d'Accélérateur
                 Expanded(
@@ -351,7 +416,7 @@ class _DrParkingViewState extends State<DrParkingView> with SingleTickerProvider
                         onTapCancel: () => setState(() => _isBraking = false),
                         child: Container(
                           width: 48,
-                          height: 90,
+                          height: 86,
                           decoration: BoxDecoration(
                             color: _isBraking ? const Color(0xFFFF0055) : const Color(0xFF263238),
                             borderRadius: BorderRadius.circular(10),
@@ -362,7 +427,7 @@ class _DrParkingViewState extends State<DrParkingView> with SingleTickerProvider
                             children: [
                               Icon(Icons.pan_tool, color: Colors.white70, size: 20),
                               SizedBox(height: 4),
-                              Text('FREIN', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900)),
+                              Text('FREIN', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 9)),
                             ],
                           ),
                         ),
@@ -374,22 +439,26 @@ class _DrParkingViewState extends State<DrParkingView> with SingleTickerProvider
                         onTapUp: (_) => setState(() => _isAccelerating = false),
                         onTapCancel: () => setState(() => _isAccelerating = false),
                         child: Container(
-                          width: 48,
-                          height: 120,
+                          width: 44,
+                          height: 104,
                           decoration: BoxDecoration(
-                            gradient: _isAccelerating
-                                ? const LinearGradient(colors: [Color(0xFF00FFCC), Color(0xFF009688)], begin: Alignment.topCenter, end: Alignment.bottomCenter)
-                                : null,
-                            color: _isAccelerating ? null : const Color(0xFF37474F),
+                            color: _isAccelerating ? const Color(0xFF00FFCC) : const Color(0xFF1E2838),
                             borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: Colors.white24, width: 2),
+                            border: Border.all(color: const Color(0xFF00FFCC), width: 2),
                           ),
-                          child: const Column(
+                          child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.speed, color: Colors.white, size: 24),
-                              SizedBox(height: 6),
-                              Text('GAZ', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w900)),
+                              Icon(Icons.speed, color: _isAccelerating ? Colors.black : const Color(0xFF00FFCC), size: 20),
+                              const SizedBox(height: 4),
+                              Text(
+                                'GAZ',
+                                style: TextStyle(
+                                  color: _isAccelerating ? Colors.black : const Color(0xFF00FFCC),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 10,
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -405,25 +474,25 @@ class _DrParkingViewState extends State<DrParkingView> with SingleTickerProvider
     );
   }
 
-  Widget _buildGearButton(String label, GearShifter g) {
-    final isSelected = _gear == g;
+  Widget _buildGearButton(String label, GearShifter targetGear) {
+    final isSelected = _gear == targetGear;
     return GestureDetector(
       onTap: () {
         FeedbackService.triggerLight();
-        setState(() => _gear = g);
+        setState(() => _gear = targetGear);
       },
       child: Container(
-        width: 38,
+        width: 36,
         height: 24,
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF00FFCC) : Colors.black26,
+          color: isSelected ? const Color(0xFF00FFCC) : Colors.transparent,
           borderRadius: BorderRadius.circular(6),
         ),
         alignment: Alignment.center,
         child: Text(
           label,
           style: TextStyle(
-            color: isSelected ? Colors.black : Colors.white60,
+            color: isSelected ? Colors.black : Colors.white70,
             fontWeight: FontWeight.w900,
             fontSize: 12,
           ),
@@ -439,7 +508,12 @@ class _ParkingArenaPainter extends CustomPainter {
   final double carX;
   final double carY;
   final double carAngle;
+  final double steeringAngle;
   final Color vehicleColor;
+  final ParkingCameraView cameraView;
+  final GearShifter gear;
+  final double speed;
+  final double proximityAlarm;
 
   _ParkingArenaPainter({
     required this.parkingSlot,
@@ -447,22 +521,131 @@ class _ParkingArenaPainter extends CustomPainter {
     required this.carX,
     required this.carY,
     required this.carAngle,
+    required this.steeringAngle,
     required this.vehicleColor,
+    required this.cameraView,
+    required this.gear,
+    required this.speed,
+    required this.proximityAlarm,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (cameraView == ParkingCameraView.cockpit) {
+      _paintCockpitParking(canvas, size);
+    } else {
+      _paintIsometricParking(canvas, size);
+    }
+  }
+
+  // --- VUE COCKPIT PARKING : PARE-BRISE, VOLANT & ÉCRAN CAMÉRA DE RECUL ---
+  void _paintCockpitParking(Canvas canvas, Size size) {
+    // 1. Vue extérieure à travers le pare-brise
+    // Sol de parking goudronné
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), Paint()..color = const Color(0xFF141924));
+
+    // Lignes de guidage au sol projetées
+    final markPaint = Paint()
+      ..color = Colors.white24
+      ..strokeWidth = 2.0;
+    canvas.drawLine(Offset(size.width * 0.25, size.height * 0.2), Offset(size.width * 0.1, size.height * 0.7), markPaint);
+    canvas.drawLine(Offset(size.width * 0.75, size.height * 0.2), Offset(size.width * 0.9, size.height * 0.7), markPaint);
+
+    // Obstacles visibles au loin à travers le pare-brise
+    for (final obs in obstacles) {
+      final double relX = (obs.center.dx - carX);
+      final double relY = (obs.center.dy - carY);
+      final screenX = size.width * 0.5 + relX * size.width * 1.5;
+      final screenY = size.height * 0.35 + relY * size.height * 1.2;
+
+      if (screenY > 0 && screenY < size.height * 0.6) {
+        if (obs.width > 0.15) {
+          // Voiture adverse
+          canvas.drawRRect(
+            RRect.fromRectAndRadius(Rect.fromCenter(center: Offset(screenX, screenY), width: 70, height: 40), const Radius.circular(6)),
+            Paint()..color = const Color(0xFF34495E),
+          );
+        } else {
+          // Plot cône orange
+          canvas.drawCircle(Offset(screenX, screenY), 10, Paint()..color = const Color(0xFFFF5722));
+        }
+      }
+    }
+
+    // 2. Tableau de bord bas (Dashboard)
+    final dashHeight = size.height * 0.42;
+    final dashTop = size.height - dashHeight;
+
+    final dashShader = const LinearGradient(
+      colors: [Color(0xFF161C26), Color(0xFF090D14)],
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+    ).createShader(Rect.fromLTWH(0, dashTop, size.width, dashHeight));
+
+    canvas.drawRect(Rect.fromLTWH(0, dashTop, size.width, dashHeight), Paint()..shader = dashShader);
+
+    // Piliers A gauche et droite
+    final pillarPaint = Paint()..color = const Color(0xFF0B0E14);
+    final pL = Path()..moveTo(0, 0)..lineTo(size.width * 0.1, 0)..lineTo(size.width * 0.04, size.height)..lineTo(0, size.height)..close();
+    final pR = Path()..moveTo(size.width, 0)..lineTo(size.width * 0.9, 0)..lineTo(size.width * 0.96, size.height)..lineTo(size.width, size.height)..close();
+    canvas.drawPath(pL, pillarPaint);
+    canvas.drawPath(pR, pillarPaint);
+
+    // 3. ÉCRAN CENTRAL : CAMÉRA DE RECUL / GPS DE PARKING
+    final screenRect = Rect.fromCenter(center: Offset(size.width * 0.5, dashTop + 36), width: size.width * 0.55, height: 58);
+    canvas.drawRRect(RRect.fromRectAndRadius(screenRect, const Radius.circular(8)), Paint()..color = Colors.black);
+    canvas.drawRRect(RRect.fromRectAndRadius(screenRect, const Radius.circular(8)), Paint()..color = (gear == GearShifter.reverse ? const Color(0xFF00FFCC) : Colors.white24)..style = PaintingStyle.stroke..strokeWidth = 1.5);
+
+    if (gear == GearShifter.reverse) {
+      // Affichage Caméra de recul dynamique avec lignes de guidage de braquage vertes/jaunes/rouges
+      final camGuidePaintG = Paint()..color = const Color(0xFF00FFCC)..strokeWidth = 2.0;
+      final camGuidePaintR = Paint()..color = const Color(0xFFFF0055)..strokeWidth = 2.0;
+
+      final turnOffset = steeringAngle * 14.0;
+      // Lignes de guidage dynamiques
+      canvas.drawLine(Offset(screenRect.left + 16, screenRect.bottom - 4), Offset(screenRect.left + 26 + turnOffset, screenRect.top + 10), camGuidePaintG);
+      canvas.drawLine(Offset(screenRect.right - 16, screenRect.bottom - 4), Offset(screenRect.right - 26 + turnOffset, screenRect.top + 10), camGuidePaintG);
+      canvas.drawLine(Offset(screenRect.left + 22 + turnOffset * 0.5, screenRect.top + 24), Offset(screenRect.right - 22 + turnOffset * 0.5, screenRect.top + 24), camGuidePaintR);
+
+      final camText = TextPainter(
+        text: const TextSpan(text: 'CAMÉRA DE RECUL ACTIVE', style: TextStyle(color: Color(0xFF00FFCC), fontSize: 8, fontWeight: FontWeight.bold)),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      camText.paint(canvas, Offset(screenRect.left + 8, screenRect.top + 4));
+    } else {
+      // Radar de stationnement numérique
+      final gpsText = TextPainter(
+        text: TextSpan(
+          text: 'ASSISTANCE CRÉNEAU PARK PILOT\nMARCHE AVANT ACTIVE [${gear.name.toUpperCase()}]',
+          style: const TextStyle(color: Colors.white70, fontSize: 8, fontWeight: FontWeight.bold, height: 1.3),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      gpsText.paint(canvas, Offset(screenRect.left + 10, screenRect.top + 14));
+    }
+
+    // Mini volant au centre bas tournant avec steeringAngle
+    canvas.save();
+    canvas.translate(size.width * 0.5, size.height - 12);
+    canvas.rotate(steeringAngle * 1.5);
+    final wheelRadius = size.height * 0.22;
+    canvas.drawCircle(Offset.zero, wheelRadius, Paint()..color = const Color(0xFF1E2838)..style = PaintingStyle.stroke..strokeWidth = 14);
+    canvas.drawCircle(Offset.zero, 18, Paint()..color = vehicleColor);
+    canvas.restore();
+  }
+
+  // --- VUE 3D ISOMETRIQUE / AERIENNE DE STATIONNEMENT ---
+  void _paintIsometricParking(Canvas canvas, Size size) {
     // 1. Marquage au sol du parking
     final linePaint = Paint()
       ..color = Colors.white24
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.0;
 
-    // Lignes de couloirs
     canvas.drawLine(Offset(0, size.height * 0.40), Offset(size.width, size.height * 0.40), linePaint);
     canvas.drawLine(Offset(0, size.height * 0.65), Offset(size.width, size.height * 0.65), linePaint);
 
-    // 2. Zone de créneau cible (Vert fluo clignotant)
+    // 2. Zone de créneau cible
     final targetPixelRect = Rect.fromLTWH(
       parkingSlot.left * size.width,
       parkingSlot.top * size.height,
@@ -480,12 +663,11 @@ class _ParkingArenaPainter extends CustomPainter {
       ..strokeWidth = 2.5;
     canvas.drawRRect(RRect.fromRectAndRadius(targetPixelRect, const Radius.circular(8)), targetBorder);
 
-    // P dans la zone
-    const pSpan = TextSpan(text: 'P', style: TextStyle(color: Color(0xFF00FFCC), fontSize: 28, fontWeight: FontWeight.w900));
+    const pSpan = TextSpan(text: 'P', style: TextStyle(color: Color(0xFF00FFCC), fontSize: 26, fontWeight: FontWeight.w900));
     final pPainter = TextPainter(text: pSpan, textDirection: TextDirection.ltr)..layout();
     pPainter.paint(canvas, targetPixelRect.center - Offset(pPainter.width / 2, pPainter.height / 2));
 
-    // 3. Dessin des obstacles (voitures garées et cônes de signalisation)
+    // 3. Dessin des obstacles
     for (final obs in obstacles) {
       final obsPixel = Rect.fromLTWH(
         obs.left * size.width,
@@ -495,44 +677,32 @@ class _ParkingArenaPainter extends CustomPainter {
       );
 
       if (obs.width > 0.15) {
-        // Voiture garée
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(obsPixel, const Radius.circular(8)),
-          Paint()..color = const Color(0xFF34495E),
-        );
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(obsPixel.deflate(4), const Radius.circular(6)),
-          Paint()..color = const Color(0xFF2C3E50),
-        );
+        canvas.drawRRect(RRect.fromRectAndRadius(obsPixel, const Radius.circular(8)), Paint()..color = const Color(0xFF34495E));
+        canvas.drawRRect(RRect.fromRectAndRadius(obsPixel.deflate(4), const Radius.circular(6)), Paint()..color = const Color(0xFF2C3E50));
       } else {
-        // Cône de signalisation orange
         canvas.drawCircle(obsPixel.center, obsPixel.width * 0.4, Paint()..color = const Color(0xFFFF5722));
         canvas.drawCircle(obsPixel.center, obsPixel.width * 0.2, Paint()..color = Colors.white);
       }
     }
 
-    // 4. Dessin de la voiture du joueur avec orientation dynamique
+    // 4. Voiture du joueur réaliste avec orientation cinématique
     canvas.save();
     final carPx = carX * size.width;
     final carPy = carY * size.height;
     canvas.translate(carPx, carPy);
-    canvas.rotate(carAngle + math.pi / 2); // Ajustement de l'axe vers l'avant
+    canvas.rotate(carAngle + math.pi / 2);
 
     final carWidth = size.width * 0.11;
     final carHeight = size.height * 0.14;
     final carRect = Rect.fromCenter(center: Offset.zero, width: carWidth, height: carHeight);
 
     // Ombre sous la voiture
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(carRect.shift(const Offset(3, 4)), const Radius.circular(8)),
-      Paint()..color = Colors.black45,
-    );
+    canvas.drawRRect(RRect.fromRectAndRadius(carRect.shift(const Offset(3, 4)), const Radius.circular(8)), Paint()..color = Colors.black45);
 
-    // Carrosserie
-    final bodyPaint = Paint()..color = vehicleColor;
-    canvas.drawRRect(RRect.fromRectAndRadius(carRect, const Radius.circular(8)), bodyPaint);
+    // Carrosserie avec dégradé
+    canvas.drawRRect(RRect.fromRectAndRadius(carRect, const Radius.circular(8)), Paint()..color = vehicleColor);
 
-    // Pare-brise et vitres
+    // Pare-brise et toit
     final windshieldRect = Rect.fromCenter(center: const Offset(0, -6), width: carWidth * 0.75, height: carHeight * 0.35);
     canvas.drawRRect(RRect.fromRectAndRadius(windshieldRect, const Radius.circular(4)), Paint()..color = const Color(0xFF1A2530));
 
@@ -540,9 +710,10 @@ class _ParkingArenaPainter extends CustomPainter {
     canvas.drawCircle(Offset(-carWidth * 0.35, -carHeight * 0.45), 3, Paint()..color = const Color(0xFFFFEB3B));
     canvas.drawCircle(Offset(carWidth * 0.35, -carHeight * 0.45), 3, Paint()..color = const Color(0xFFFFEB3B));
 
-    // Feux arrière rouges
-    canvas.drawCircle(Offset(-carWidth * 0.35, carHeight * 0.45), 3, Paint()..color = const Color(0xFFFF1744));
-    canvas.drawCircle(Offset(carWidth * 0.35, carHeight * 0.45), 3, Paint()..color = const Color(0xFFFF1744));
+    // Feux arrière (Rouges ou Blancs si marche arrière R)
+    final rearLightColor = gear == GearShifter.reverse ? Colors.white : const Color(0xFFFF1744);
+    canvas.drawCircle(Offset(-carWidth * 0.35, carHeight * 0.45), 3, Paint()..color = rearLightColor);
+    canvas.drawCircle(Offset(carWidth * 0.35, carHeight * 0.45), 3, Paint()..color = rearLightColor);
 
     canvas.restore();
   }

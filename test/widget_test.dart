@@ -58,6 +58,22 @@ void main() {
     expect(tester.takeException(), isNull); // Aucune exception RenderFlex overflow
   });
 
+  testWidgets('Landscape / Desktop 1280x664 screen does not overflow', (WidgetTester tester) async {
+    // Teste la taille exacte rapportée dans l'erreur RenderFlex (1280x664)
+    tester.view.physicalSize = const Size(1280, 664);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    await tester.pumpWidget(const NeoChromaApp());
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.text('OMNI-GAMES MEGA'), findsOneWidget);
+    expect(tester.takeException(), isNull); // Aucune exception RenderFlex overflow
+  });
+
   testWidgets('Ending Letter Word Chain screen renders and validates words', (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1080, 1920);
     tester.view.devicePixelRatio = 1.0;

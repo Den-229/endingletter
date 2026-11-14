@@ -5,6 +5,12 @@ import 'football_engine.dart';
 import '../../../widgets/confetti_overlay.dart';
 import '../../../services/storage_service.dart';
 
+enum FootballCameraMode {
+  broadcast, // Vue Télévision Diffusion PES (Perspective classique)
+  action,    // Vue Rapprochée Action (Zoom dynamique centré sur le ballon)
+  tactical,  // Vue Tactique Aérienne d'Ensemble
+}
+
 class FootballMatchScreen extends StatefulWidget {
   final FootballTeam teamA;
   final FootballTeam teamB;
@@ -28,6 +34,7 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
   String _goalMessage = '';
   double _shotCharge = 0.0;
   bool _isChargingShot = false;
+  FootballCameraMode _cameraMode = FootballCameraMode.broadcast;
 
   @override
   void initState() {
@@ -226,6 +233,63 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
                               activePlayerB: _engine.activePlayerB,
                               ballPos: _engine.ballPos,
                               ballHeight: _engine.ballHeight,
+                              cameraMode: _cameraMode,
+                            ),
+                          ),
+
+                          // Bouton Sélecteur de Caméra PES
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: GestureDetector(
+                              onTap: () {
+                                FeedbackService.triggerSelection();
+                                setState(() {
+                                  switch (_cameraMode) {
+                                    case FootballCameraMode.broadcast:
+                                      _cameraMode = FootballCameraMode.action;
+                                      break;
+                                    case FootballCameraMode.action:
+                                      _cameraMode = FootballCameraMode.tactical;
+                                      break;
+                                    case FootballCameraMode.tactical:
+                                      _cameraMode = FootballCameraMode.broadcast;
+                                      break;
+                                  }
+                                });
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.75),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(color: const Color(0xFF00FFCC), width: 1.5),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: const Color(0xFF00FFCC).withValues(alpha: 0.3),
+                                      blurRadius: 8,
+                                    ),
+                                  ],
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.videocam, color: Color(0xFF00FFCC), size: 14),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      _cameraMode == FootballCameraMode.broadcast
+                                          ? 'VUE : TÉLÉ PES'
+                                          : (_cameraMode == FootballCameraMode.action ? 'VUE : ACTION 3D' : 'VUE : TACTIQUE'),
+                                      style: const TextStyle(
+                                        color: Color(0xFF00FFCC),
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 10,
+                                        letterSpacing: 0.8,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
 
@@ -658,6 +722,7 @@ class _FootballPitchPainter extends CustomPainter {
   final FootballPlayer activePlayerB;
   final Offset ballPos;
   final double ballHeight;
+  final FootballCameraMode cameraMode;
 
   _FootballPitchPainter({
     required this.teamA,
@@ -666,10 +731,22 @@ class _FootballPitchPainter extends CustomPainter {
     required this.activePlayerB,
     required this.ballPos,
     required this.ballHeight,
+    required this.cameraMode,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
+    canvas.save();
+
+    if (cameraMode == FootballCameraMode.action) {
+      // Zoom caméra dynamique action centrée sur la zone de jeu du ballon
+      final targetX = ballPos.dx * size.width;
+      final targetY = ballPos.dy * size.height;
+      canvas.translate(size.width * 0.5, size.height * 0.5);
+      canvas.scale(1.30);
+      canvas.translate(-targetX, -targetY);
+    }
+
     // 1. Bandes d'herbe tondue (alternance de tons verts)
     final stripeCount = 10;
     final stripeWidth = size.width / stripeCount;
@@ -679,6 +756,35 @@ class _FootballPitchPainter extends CustomPainter {
     for (int i = 0; i < stripeCount; i++) {
       final rect = Rect.fromLTWH(i * stripeWidth, 0, stripeWidth, size.height);
       canvas.drawRect(rect, i.isEven ? greenLight : greenDark);
+    }
+
+    // Panneaux LED publicitaires du stade (PES Broadcast style)
+    if (cameraMode == FootballCameraMode.broadcast) {
+      final adBoardRect = Rect.fromLTWH(size.width * 0.03, 0, size.width * 0.94, size.height * 0.04);
+      canvas.drawRect(adBoardRect, Paint()..color = const Color(0xFF0D1525));
+      final adBorder = Paint()..color = const Color(0xFF00FFCC)..style = PaintingStyle.stroke..strokeWidth = 1.0;
+      canvas.drawRect(adBoardRect, adBorder);
+
+      final adText = TextPainter(
+        text: const TextSpan(
+          text: 'PES PRO LEAGUE 2026  ★  KONAMI MASTER CHAMPIONSHIP  ★  OMNI MULTIVERSE ARENA',
+          style: TextStyle(color: Color(0xFF00FFCC), fontSize: 7, fontWeight: FontWeight.bold, letterSpacing: 1.5),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      adText.paint(canvas, Offset(size.width * 0.5 - adText.width / 2, size.height * 0.02 - adText.height / 2));
+    }
+
+    // Lignes tactiques en mode tactique
+    if (cameraMode == FootballCameraMode.tactical) {
+      final tacPaintA = Paint()..color = const Color(0xFF00FFCC).withValues(alpha: 0.25)..strokeWidth = 1.0;
+      for (int i = 0; i < teamA.players.length - 1; i++) {
+        canvas.drawLine(
+          Offset(teamA.players[i].pos.dx * size.width, teamA.players[i].pos.dy * size.height),
+          Offset(teamA.players[i + 1].pos.dx * size.width, teamA.players[i + 1].pos.dy * size.height),
+          tacPaintA,
+        );
+      }
     }
 
     // 2. Marquages du terrain en blanc
@@ -754,6 +860,8 @@ class _FootballPitchPainter extends CustomPainter {
     canvas.drawCircle(ballCenter, 2.6, patchPaint);
     canvas.drawCircle(Offset(ballCenter.dx - 4.2, ballCenter.dy - 2.0), 1.6, patchPaint);
     canvas.drawCircle(Offset(ballCenter.dx + 4.2, ballCenter.dy + 2.0), 1.6, patchPaint);
+
+    canvas.restore();
   }
 
   void _drawPlayer(
