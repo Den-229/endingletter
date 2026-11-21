@@ -2,13 +2,42 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'football_models.dart';
 import 'football_engine.dart';
-import '../../../widgets/confetti_overlay.dart';
 import '../../../services/storage_service.dart';
 
 enum FootballCameraMode {
-  broadcast, // Vue Télévision Diffusion PES (Perspective classique)
+  broadcast, // Vue Télévision Diffusion PES (Perspective latérale classique)
   action,    // Vue Rapprochée Action (Zoom dynamique centré sur le ballon)
   tactical,  // Vue Tactique Aérienne d'Ensemble
+}
+
+class TurfParticle {
+  double x;
+  double y;
+  double vx;
+  double vy;
+  double life; // 1.0 à 0.0
+  Color color;
+
+  TurfParticle({
+    required this.x,
+    required this.y,
+    required this.vx,
+    required this.vy,
+    required this.life,
+    required this.color,
+  });
+}
+
+class StadiumFlash {
+  double x;
+  double y;
+  double life;
+
+  StadiumFlash({
+    required this.x,
+    required this.y,
+    required this.life,
+  });
 }
 
 class FootballMatchScreen extends StatefulWidget {
@@ -35,6 +64,13 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
   double _shotCharge = 0.0;
   bool _isChargingShot = false;
   FootballCameraMode _cameraMode = FootballCameraMode.broadcast;
+
+  // Effets vivants de stade & supporters
+  double _crowdAnimTime = 0.0;
+  final List<TurfParticle> _turfParticles = [];
+  final List<StadiumFlash> _cameraFlashes = [];
+  final math.Random _rnd = math.Random(1337);
+  double _goalNetBulge = 0.0;
 
   @override
   void initState() {
@@ -72,6 +108,49 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
 
     setState(() {
       _engine.update(dt);
+      _crowdAnimTime += dt * 3.8;
+
+      // Amorti du filet de but
+      if (_goalNetBulge > 0.01) {
+        _goalNetBulge *= 0.94;
+      }
+
+      // Éjection de brins d'herbe / terre (Turf Particles) sous les crampons
+      if (_engine.activePlayerA.isSliding || _engine.isSprintingA || _engine.ballCarrier != null) {
+        final pos = _engine.activePlayerA.pos;
+        if (_rnd.nextDouble() < 0.45) {
+          _turfParticles.add(TurfParticle(
+            x: pos.dx + (_rnd.nextDouble() - 0.5) * 0.02,
+            y: pos.dy + (_rnd.nextDouble() - 0.5) * 0.02,
+            vx: (_rnd.nextDouble() - 0.5) * 0.06,
+            vy: -0.04 - _rnd.nextDouble() * 0.05,
+            life: 0.6,
+            color: _rnd.nextBool() ? const Color(0xFF1E824C) : const Color(0xFF27AE60),
+          ));
+        }
+      }
+
+      // Mise à jour de la physique des particules de pelouse
+      for (final p in _turfParticles) {
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += 0.15 * dt; // Gravité
+        p.life -= dt * 1.8;
+      }
+      _turfParticles.removeWhere((p) => p.life <= 0);
+
+      // Flashs d'appareils photo aléatoires dans les tribunes de supporters
+      if (_rnd.nextDouble() < 0.22) {
+        _cameraFlashes.add(StadiumFlash(
+          x: 0.04 + _rnd.nextDouble() * 0.92,
+          y: 0.005 + _rnd.nextDouble() * 0.038,
+          life: 0.22,
+        ));
+      }
+      for (final f in _cameraFlashes) {
+        f.life -= dt * 4.2;
+      }
+      _cameraFlashes.removeWhere((f) => f.life <= 0);
     });
   }
 
@@ -79,11 +158,12 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
     setState(() {
       _showGoalBanner = true;
       _goalMessage = 'GOOOOOOAL !';
+      _goalNetBulge = 1.0; // Vibration intense du filet
     });
 
     FeedbackService.triggerSuccess();
 
-    Future.delayed(const Duration(milliseconds: 2200), () {
+    Future.delayed(const Duration(milliseconds: 2400), () {
       if (!mounted) return;
       setState(() {
         _showGoalBanner = false;
@@ -168,7 +248,7 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
                 _engine.onFullTime = _handleFullTime;
               });
             },
-            child: const Text('REJOUER', style: TextStyle(fontWeight: FontWeight.bold)),
+            child: const Text('REJOUER LE MATCH', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -181,9 +261,9 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          SizedBox(width: 50, child: Text(valA, style: const TextStyle(color: Color(0xFF00FFCC), fontWeight: FontWeight.bold))),
+          Text(valA, style: const TextStyle(color: Color(0xFF00FFCC), fontWeight: FontWeight.bold)),
           Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
-          SizedBox(width: 50, child: Text(valB, textAlign: TextAlign.right, style: const TextStyle(color: Color(0xFFFF0055), fontWeight: FontWeight.bold))),
+          Text(valB, style: const TextStyle(color: Color(0xFFFF0055), fontWeight: FontWeight.bold)),
         ],
       ),
     );
@@ -191,33 +271,29 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
 
   @override
   Widget build(BuildContext context) {
-    final bool teamAHasBall = _engine.ballCarrier != null && widget.teamA.players.contains(_engine.ballCarrier);
+    final teamAHasBall = _engine.ballCarrier != null && widget.teamA.players.contains(_engine.ballCarrier);
 
     return Scaffold(
-      backgroundColor: const Color(0xFF060B12),
-      body: ConfettiOverlay(
-        showCelebration: _showGoalBanner,
-        title: 'GOOOOOAL ! ⚽',
-        subtitle: 'But exceptionnel marqué !',
-        child: SafeArea(
-          child: Stack(
+      backgroundColor: const Color(0xFF070B14),
+      body: SafeArea(
+        child: Stack(
           children: [
             Column(
               children: [
                 // 1. Scoreboard HUD façon PES 2017
                 _buildScoreboardHUD(),
 
-                // 2. Terrain de Football (Pelouse et Joueurs)
+                // 2. Terrain de Football (Pelouse 3D, Supporters vivants & Joueurs)
                 Expanded(
                   flex: 6,
                   child: Container(
                     margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF1E6F3D),
+                      color: const Color(0xFF0E1A2B),
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(color: Colors.white24, width: 2),
                       boxShadow: [
-                        BoxShadow(color: Colors.black.withValues(alpha: 0.7), blurRadius: 18),
+                        BoxShadow(color: Colors.black.withValues(alpha: 0.8), blurRadius: 20),
                       ],
                     ),
                     child: ClipRRect(
@@ -234,6 +310,10 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
                               ballPos: _engine.ballPos,
                               ballHeight: _engine.ballHeight,
                               cameraMode: _cameraMode,
+                              crowdAnimTime: _crowdAnimTime,
+                              turfParticles: _turfParticles,
+                              cameraFlashes: _cameraFlashes,
+                              goalNetBulge: _goalNetBulge,
                             ),
                           ),
 
@@ -261,12 +341,12 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
                               child: Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                                 decoration: BoxDecoration(
-                                  color: Colors.black.withValues(alpha: 0.75),
+                                  color: Colors.black.withValues(alpha: 0.80),
                                   borderRadius: BorderRadius.circular(10),
                                   border: Border.all(color: const Color(0xFF00FFCC), width: 1.5),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: const Color(0xFF00FFCC).withValues(alpha: 0.3),
+                                      color: const Color(0xFF00FFCC).withValues(alpha: 0.35),
                                       blurRadius: 8,
                                     ),
                                   ],
@@ -293,7 +373,7 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
                             ),
                           ),
 
-                          // Radar minimap en haut au centre
+                          // Radar minimap en bas au centre
                           Positioned(
                             bottom: 8,
                             left: 0,
@@ -363,7 +443,7 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
               ],
             ),
 
-            // Goal Celebration Overlay
+            // Goal Celebration Overlay avec fumigènes et confettis
             if (_showGoalBanner)
               Positioned.fill(
                 child: Container(
@@ -372,16 +452,26 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.sports_soccer, color: Color(0xFF00FFCC), size: 64),
+                        const Icon(Icons.sports_soccer, color: Color(0xFF00FFCC), size: 68),
                         const SizedBox(height: 12),
                         Text(
                           _goalMessage,
                           style: const TextStyle(
                             color: Color(0xFF00FFCC),
-                            fontSize: 34,
+                            fontSize: 36,
                             fontWeight: FontWeight.w900,
                             letterSpacing: 3,
-                            shadows: [Shadow(color: Color(0xFF00FFCC), blurRadius: 20)],
+                            shadows: [Shadow(color: Color(0xFF00FFCC), blurRadius: 24)],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'BUT EXCEPTIONNEL DANS LA LUCARNE !',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.9),
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.2,
                           ),
                         ),
                       ],
@@ -389,13 +479,11 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
                   ),
                 ),
               ),
-
           ],
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   Widget _buildScoreboardHUD() {
     return Container(
@@ -723,6 +811,10 @@ class _FootballPitchPainter extends CustomPainter {
   final Offset ballPos;
   final double ballHeight;
   final FootballCameraMode cameraMode;
+  final double crowdAnimTime;
+  final List<TurfParticle> turfParticles;
+  final List<StadiumFlash> cameraFlashes;
+  final double goalNetBulge;
 
   _FootballPitchPainter({
     required this.teamA,
@@ -732,6 +824,10 @@ class _FootballPitchPainter extends CustomPainter {
     required this.ballPos,
     required this.ballHeight,
     required this.cameraMode,
+    required this.crowdAnimTime,
+    required this.turfParticles,
+    required this.cameraFlashes,
+    required this.goalNetBulge,
   });
 
   @override
@@ -747,37 +843,111 @@ class _FootballPitchPainter extends CustomPainter {
       canvas.translate(-targetX, -targetY);
     }
 
-    // 1. Bandes d'herbe tondue (alternance de tons verts)
+    // 1. TRIBUNES DES SUPPORTERS VIVANTES EN HAUT DU TERRAIN (Stade en ébullition)
+    final crowdHeight = size.height * 0.09;
+    // Gradins en béton en perspective
+    final standShader = const LinearGradient(
+      colors: [Color(0xFF090D18), Color(0xFF161E30), Color(0xFF0B1020)],
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+    ).createShader(Rect.fromLTWH(0, 0, size.width, crowdHeight));
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, crowdHeight), Paint()..shader = standShader);
+
+    // Supporters animés (rangées de fans aux couleurs des 2 équipes)
+    const int fanCols = 32;
+    for (int row = 0; row < 3; row++) {
+      final yRow = 4.0 + row * 8.0;
+      for (int i = 0; i < fanCols; i++) {
+        final xFan = (i + 0.5) * (size.width / fanCols);
+        final isHomeSide = xFan < size.width * 0.48;
+        final isAwaySide = xFan > size.width * 0.52;
+        final fanColor = isHomeSide
+            ? teamA.primaryColor
+            : (isAwaySide ? teamB.primaryColor : const Color(0xFFBDC3C7));
+
+        // Mouvement de liesse / saut des supporters en vague (Ola)
+        final jumpOffset = math.sin(crowdAnimTime * 2.2 + i * 0.45 + row) * 2.2;
+        final fanY = yRow - jumpOffset.clamp(0.0, 4.0);
+
+        // Tête et buste du supporter
+        canvas.drawCircle(Offset(xFan, fanY), 2.2, Paint()..color = const Color(0xFFE0AC69));
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(Rect.fromCenter(center: Offset(xFan, fanY + 3.5), width: 4.8, height: 4.2), const Radius.circular(1.5)),
+          Paint()..color = fanColor,
+        );
+
+        // Écharpes et drapeaux brandis
+        if (i % 4 == 0) {
+          final flagWave = math.sin(crowdAnimTime * 3.0 + i) * 3.0;
+          final scarfPaint = Paint()
+            ..color = fanColor
+            ..strokeWidth = 1.8;
+          canvas.drawLine(Offset(xFan - 2, fanY - 2 + flagWave), Offset(xFan + 3, fanY - 4 - flagWave), scarfPaint);
+        }
+      }
+    }
+
+    // Flashs d'appareils photo dans la foule
+    for (final f in cameraFlashes) {
+      final flashX = f.x * size.width;
+      final flashY = f.y * size.height;
+      final flashRadius = 3.0 + f.life * 6.0;
+      final glowPaint = Paint()
+        ..color = Colors.white.withValues(alpha: (f.life * 4.0).clamp(0.0, 1.0))
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+      canvas.drawCircle(Offset(flashX, flashY), flashRadius, glowPaint);
+      canvas.drawCircle(Offset(flashX, flashY), 1.5, Paint()..color = Colors.white);
+    }
+
+    // 2. PANNEAUX LED PUBLICITAIRES DU STADE (PES Broadcast style avec animations)
+    final adBoardRect = Rect.fromLTWH(size.width * 0.03, crowdHeight - 2, size.width * 0.94, size.height * 0.035);
+    canvas.drawRect(adBoardRect, Paint()..color = const Color(0xFF070B16));
+    final adBorder = Paint()..color = const Color(0xFF00FFCC)..style = PaintingStyle.stroke..strokeWidth = 1.0;
+    canvas.drawRect(adBoardRect, adBorder);
+
+    final adScrollOffset = (crowdAnimTime * 15.0) % 200.0;
+    final adText = TextPainter(
+      text: const TextSpan(
+        text: 'PES PRO LEAGUE 2026  ★  KONAMI MASTER CHAMPIONSHIP  ★  OMNI MULTIVERSE ARENA  ★  FAIR PLAY',
+        style: TextStyle(color: Color(0xFF00FFCC), fontSize: 7, fontWeight: FontWeight.bold, letterSpacing: 1.5),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    canvas.save();
+    canvas.clipRect(adBoardRect);
+    adText.paint(canvas, Offset(size.width * 0.5 - adText.width / 2 - adScrollOffset + 100, adBoardRect.center.dy - adText.height / 2));
+    canvas.restore();
+
+    // 3. TERRAIN DE FOOTBALL VIVANT (Herbe tondue 3D & éclairage)
+    final pitchTop = crowdHeight + size.height * 0.025;
+    final pitchHeight = size.height - pitchTop - 4;
+
+    // Bandes d'herbe alternées en tondeuse professionnelle
     final stripeCount = 10;
     final stripeWidth = size.width / stripeCount;
-    final greenDark = Paint()..color = const Color(0xFF1B6A3A);
-    final greenLight = Paint()..color = const Color(0xFF227D45);
+    final greenDark = Paint()..color = const Color(0xFF196335);
+    final greenLight = Paint()..color = const Color(0xFF227842);
 
     for (int i = 0; i < stripeCount; i++) {
-      final rect = Rect.fromLTWH(i * stripeWidth, 0, stripeWidth, size.height);
+      final rect = Rect.fromLTWH(i * stripeWidth, pitchTop, stripeWidth, pitchHeight);
       canvas.drawRect(rect, i.isEven ? greenLight : greenDark);
     }
 
-    // Panneaux LED publicitaires du stade (PES Broadcast style)
-    if (cameraMode == FootballCameraMode.broadcast) {
-      final adBoardRect = Rect.fromLTWH(size.width * 0.03, 0, size.width * 0.94, size.height * 0.04);
-      canvas.drawRect(adBoardRect, Paint()..color = const Color(0xFF0D1525));
-      final adBorder = Paint()..color = const Color(0xFF00FFCC)..style = PaintingStyle.stroke..strokeWidth = 1.0;
-      canvas.drawRect(adBoardRect, adBorder);
-
-      final adText = TextPainter(
-        text: const TextSpan(
-          text: 'PES PRO LEAGUE 2026  ★  KONAMI MASTER CHAMPIONSHIP  ★  OMNI MULTIVERSE ARENA',
-          style: TextStyle(color: Color(0xFF00FFCC), fontSize: 7, fontWeight: FontWeight.bold, letterSpacing: 1.5),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      adText.paint(canvas, Offset(size.width * 0.5 - adText.width / 2, size.height * 0.02 - adText.height / 2));
-    }
+    // 4. RAYONS VOLUMÉTRIQUES DES 4 PROJECTEURS DU STADE
+    final lightColor = Colors.white.withValues(alpha: 0.06);
+    final beamPaint = Paint()
+      ..color = lightColor
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 16);
+    // Projecteur Haut Gauche
+    final beamL = Path()..moveTo(0, 0)..lineTo(size.width * 0.45, size.height)..lineTo(0, size.height)..close();
+    canvas.drawPath(beamL, beamPaint);
+    // Projecteur Haut Droite
+    final beamR = Path()..moveTo(size.width, 0)..lineTo(size.width * 0.55, size.height)..lineTo(size.width, size.height)..close();
+    canvas.drawPath(beamR, beamPaint);
 
     // Lignes tactiques en mode tactique
     if (cameraMode == FootballCameraMode.tactical) {
-      final tacPaintA = Paint()..color = const Color(0xFF00FFCC).withValues(alpha: 0.25)..strokeWidth = 1.0;
+      final tacPaintA = Paint()..color = const Color(0xFF00FFCC).withValues(alpha: 0.35)..strokeWidth = 1.2;
       for (int i = 0; i < teamA.players.length - 1; i++) {
         canvas.drawLine(
           Offset(teamA.players[i].pos.dx * size.width, teamA.players[i].pos.dy * size.height),
@@ -787,53 +957,81 @@ class _FootballPitchPainter extends CustomPainter {
       }
     }
 
-    // 2. Marquages du terrain en blanc
+    // 5. MARQUAGES RÉALISTES DU TERRAIN
     final linePaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.6)
+      ..color = Colors.white.withValues(alpha: 0.70)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.0;
 
     // Ligne de touche extérieure
-    canvas.drawRect(Rect.fromLTWH(size.width * 0.03, size.height * 0.05, size.width * 0.94, size.height * 0.90), linePaint);
+    canvas.drawRect(Rect.fromLTWH(size.width * 0.03, pitchTop + 4, size.width * 0.94, pitchHeight - 8), linePaint);
 
     // Ligne médiane
-    canvas.drawLine(Offset(size.width * 0.50, size.height * 0.05), Offset(size.width * 0.50, size.height * 0.95), linePaint);
+    final midX = size.width * 0.50;
+    canvas.drawLine(Offset(midX, pitchTop + 4), Offset(midX, size.height - 4), linePaint);
 
     // Rond central & point central
-    canvas.drawCircle(Offset(size.width * 0.50, size.height * 0.50), size.height * 0.18, linePaint);
-    canvas.drawCircle(Offset(size.width * 0.50, size.height * 0.50), 3.0, Paint()..color = Colors.white70);
+    final pitchCenterY = pitchTop + pitchHeight * 0.50;
+    canvas.drawCircle(Offset(midX, pitchCenterY), pitchHeight * 0.22, linePaint);
+    canvas.drawCircle(Offset(midX, pitchCenterY), 3.0, Paint()..color = Colors.white70);
 
-    // Surface de réparation Gauche (But A)
-    canvas.drawRect(Rect.fromLTWH(size.width * 0.03, size.height * 0.28, size.width * 0.16, size.height * 0.44), linePaint);
-    // Cage de but A
-    canvas.drawRect(Rect.fromLTWH(size.width * 0.005, size.height * 0.40, size.width * 0.025, size.height * 0.20), Paint()..color = Colors.white30);
+    // 6. CAGES DE BUT 3D AVEC FILET HEXAGONAL DYNAMIQUE
+    final goalDepth = 14.0 + goalNetBulge * 10.0;
+    final goalH = pitchHeight * 0.30;
+    final goalY = pitchCenterY - goalH * 0.5;
 
-    // Surface de réparation Droite (But B)
-    canvas.drawRect(Rect.fromLTWH(size.width * 0.81, size.height * 0.28, size.width * 0.16, size.height * 0.44), linePaint);
-    // Cage de but B
-    canvas.drawRect(Rect.fromLTWH(size.width * 0.97, size.height * 0.40, size.width * 0.025, size.height * 0.20), Paint()..color = Colors.white30);
+    // Cage Gauche (Team A)
+    final goalPostPaint = Paint()..color = Colors.white..strokeWidth = 3.0..strokeCap = StrokeCap.round;
+    final goalNetPaint = Paint()..color = Colors.white.withValues(alpha: 0.35)..style = PaintingStyle.stroke..strokeWidth = 1.0;
 
-    // 3. Dessin des Joueurs Team A
+    // Filet et montants But Gauche
+    canvas.drawRect(Rect.fromLTWH(size.width * 0.03 - goalDepth, goalY, goalDepth, goalH), goalNetPaint);
+    canvas.drawLine(Offset(size.width * 0.03, goalY), Offset(size.width * 0.03, goalY + goalH), goalPostPaint);
+
+    // Cage Droite (Team B)
+    canvas.drawRect(Rect.fromLTWH(size.width * 0.97, goalY, goalDepth, goalH), goalNetPaint);
+    canvas.drawLine(Offset(size.width * 0.97, goalY), Offset(size.width * 0.97, goalY + goalH), goalPostPaint);
+
+    // Surfaces de réparation
+    canvas.drawRect(Rect.fromLTWH(size.width * 0.03, pitchCenterY - pitchHeight * 0.32, size.width * 0.16, pitchHeight * 0.64), linePaint);
+    canvas.drawRect(Rect.fromLTWH(size.width * 0.81, pitchCenterY - pitchHeight * 0.32, size.width * 0.16, pitchHeight * 0.64), linePaint);
+
+    // Drapeaux de corner animés au vent
+    _drawCornerFlag(canvas, Offset(size.width * 0.03, pitchTop + 4), crowdAnimTime);
+    _drawCornerFlag(canvas, Offset(size.width * 0.97, pitchTop + 4), crowdAnimTime + 1.2);
+    _drawCornerFlag(canvas, Offset(size.width * 0.03, size.height - 4), crowdAnimTime + 2.4);
+    _drawCornerFlag(canvas, Offset(size.width * 0.97, size.height - 4), crowdAnimTime + 3.6);
+
+    // 7. PARTICULES D'HERBE ÉJECTÉES (Turf Particles)
+    for (final tp in turfParticles) {
+      canvas.drawCircle(
+        Offset(tp.x * size.width, tp.y * size.height),
+        1.8 * tp.life,
+        Paint()..color = tp.color.withValues(alpha: tp.life),
+      );
+    }
+
+    // 8. DESSIN DES JOUEURS VIVANTS & ATHLÉTIQUES TEAM A
     for (final p in teamA.players) {
-      _drawPlayer(canvas, size, p, teamA.primaryColor, teamA.secondaryColor, isControlled: p == activePlayerA);
+      _drawLivingPlayer(canvas, size, p, teamA.primaryColor, teamA.secondaryColor, isControlled: p == activePlayerA, ballPos: ballPos);
     }
 
-    // 4. Dessin des Joueurs Team B
+    // 9. DESSIN DES JOUEURS VIVANTS & ATHLÉTIQUES TEAM B
     for (final p in teamB.players) {
-      _drawPlayer(canvas, size, p, teamB.primaryColor, teamB.secondaryColor, isControlled: p == activePlayerB);
+      _drawLivingPlayer(canvas, size, p, teamB.primaryColor, teamB.secondaryColor, isControlled: p == activePlayerB, ballPos: ballPos);
     }
 
-    // 5. Dessin du Ballon avec texture 3D et ombre portée réaliste
+    // 10. BALLON TELSTAR 3D AVEC TEXTURE CUIR & OMBRE PORTÉE ÉLEVÉE
     final bX = ballPos.dx * size.width;
     final bY = ballPos.dy * size.height;
-    final elevation = ballHeight * 24.0;
+    final elevation = ballHeight * 26.0;
 
-    // Ombre portée sous le ballon (s'éloigne et s'estompe avec l'élévation)
+    // Ombre sous le ballon
     final shadowScale = 1.0 + (elevation * 0.05);
-    final shadowOpacity = (0.45 - elevation * 0.015).clamp(0.10, 0.45);
+    final shadowOpacity = (0.48 - elevation * 0.015).clamp(0.10, 0.48);
     canvas.drawOval(
       Rect.fromCenter(
-        center: Offset(bX + (elevation * 0.4), bY + 4 + (elevation * 0.3)),
+        center: Offset(bX + (elevation * 0.38), bY + 4 + (elevation * 0.3)),
         width: 14 * shadowScale,
         height: 8 * shadowScale,
       ),
@@ -842,20 +1040,20 @@ class _FootballPitchPainter extends CustomPainter {
 
     // Sphère 3D du ballon de football
     final ballCenter = Offset(bX, bY - elevation);
-    final ballRadius = 7.5;
+    const ballRadius = 7.5;
 
-    // Fond sphère en dégradé radial (éclairage stadium 3D)
+    // Dégradé d'éclairage 3D réaliste
     final ballShader = RadialGradient(
-      center: const Alignment(-0.4, -0.4),
+      center: const Alignment(-0.35, -0.35),
       radius: 0.9,
-      colors: const [Colors.white, Color(0xFFE0E0E0), Color(0xFF9E9E9E)],
+      colors: const [Colors.white, Color(0xFFECEFF1), Color(0xFF90A4AE)],
       stops: const [0.0, 0.65, 1.0],
     ).createShader(Rect.fromCircle(center: ballCenter, radius: ballRadius));
 
     canvas.drawCircle(ballCenter, ballRadius, Paint()..shader = ballShader);
     canvas.drawCircle(ballCenter, ballRadius, Paint()..color = Colors.black45..style = PaintingStyle.stroke..strokeWidth = 0.8);
 
-    // Panneaux géométriques en cuir (Pentagones noirs Telstar)
+    // Panneaux pentagonaux Telstar
     final patchPaint = Paint()..color = const Color(0xFF1A1A1A);
     canvas.drawCircle(ballCenter, 2.6, patchPaint);
     canvas.drawCircle(Offset(ballCenter.dx - 4.2, ballCenter.dy - 2.0), 1.6, patchPaint);
@@ -864,106 +1062,127 @@ class _FootballPitchPainter extends CustomPainter {
     canvas.restore();
   }
 
-  void _drawPlayer(
+  void _drawCornerFlag(Canvas canvas, Offset pos, double time) {
+    // Poteau du drapeau
+    canvas.drawLine(pos, pos - const Offset(0, 10), Paint()..color = Colors.white..strokeWidth = 1.5);
+    // Tissu du drapeau qui ondule dans le vent
+    final wave = math.sin(time * 2.5) * 2.0;
+    final flagPath = Path()
+      ..moveTo(pos.dx, pos.dy - 10)
+      ..lineTo(pos.dx + 7, pos.dy - 7 + wave)
+      ..lineTo(pos.dx, pos.dy - 4)
+      ..close();
+    canvas.drawPath(flagPath, Paint()..color = const Color(0xFFFFD166));
+  }
+
+  void _drawLivingPlayer(
     Canvas canvas,
     Size size,
     FootballPlayer p,
     Color primaryColor,
     Color secondaryColor, {
     required bool isControlled,
+    required Offset ballPos,
   }) {
     final px = p.pos.dx * size.width;
     final py = p.pos.dy * size.height;
 
-    // 1. Ombre portée dynamique sous les projecteurs du stade
+    // 1. Ombre portée dynamique sous les projecteurs
     canvas.drawOval(
-      Rect.fromCenter(center: Offset(px + 3, py + 8), width: 22, height: 10),
-      Paint()..color = Colors.black.withValues(alpha: 0.38),
+      Rect.fromCenter(center: Offset(px + 3, py + 8), width: 24, height: 11),
+      Paint()..color = Colors.black.withValues(alpha: 0.42),
     );
 
-    // Trace de glissade sur la pelouse en cas de tacle glissé
+    // Trace de glissade sur l'herbe en cas de tacle glissé
     if (p.isSliding) {
       final skidPaint = Paint()
         ..color = const Color(0xFF0F3D1C)
         ..strokeWidth = 5.0
         ..strokeCap = StrokeCap.round;
-      canvas.drawLine(Offset(px - 14, py + 4), Offset(px + 4, py + 4), skidPaint);
+      canvas.drawLine(Offset(px - 16, py + 4), Offset(px + 6, py + 4), skidPaint);
     }
 
-    // 2. Rendu de l'athlète avec orientation corporelle réaliste
+    // 2. Rendu de l'athlète avec orientation corporelle et tête tournée vers le ballon
     canvas.save();
     canvas.translate(px, py);
     canvas.rotate(p.facingAngle);
 
     final bool isGk = p.role == PlayerRole.gk;
-    final Color jerseyColor = isGk ? const Color(0xFFFFD166) : primaryColor;
+    final Color jerseyColor = isGk ? const Color(0xFFFF9F1C) : primaryColor;
     final Color shortsColor = isGk ? const Color(0xFF1E2842) : (primaryColor == Colors.white ? const Color(0xFF1E2842) : Colors.white);
-    final Color socksColor = isGk ? const Color(0xFFFFD166) : secondaryColor;
+    final Color socksColor = isGk ? const Color(0xFFFF9F1C) : secondaryColor;
 
-    // Cycle d'animation des jambes
-    final double legCycle = math.sin(p.animTime) * 5.0;
+    // Cycle d'animation athlétique de course
+    final double legCycle = math.sin(p.animTime) * 5.2;
 
-    // --- JAMBES & CHAUSSURES DE FOOTBALL (CLEATS) ---
+    // --- JAMBES ATHLÉTIQUES & CHAUSSURES DE FOOTBALL ---
     if (p.isSliding) {
-      // Pose de tacle glissé : jambe avant tendue, jambe arrière repliée
-      // Jambe arrière repliée
-      canvas.drawRRect(RRect.fromRectAndRadius(const Rect.fromLTWH(-10, -5, 8, 4), const Radius.circular(2)), Paint()..color = socksColor);
-      // Jambe avant tendue
-      canvas.drawRRect(RRect.fromRectAndRadius(const Rect.fromLTWH(0, 2, 14, 4), const Radius.circular(2)), Paint()..color = socksColor);
-      // Crampon avant
-      canvas.drawOval(const Rect.fromLTWH(11, 1, 6, 4.5), Paint()..color = const Color(0xFF111111));
+      // Pose de tacle glissé pro : jambe avant tendue pour crocheter le ballon
+      canvas.drawRRect(RRect.fromRectAndRadius(const Rect.fromLTWH(-10, -5, 8, 4.5), const Radius.circular(2)), Paint()..color = socksColor);
+      canvas.drawRRect(RRect.fromRectAndRadius(const Rect.fromLTWH(0, 2, 16, 4.5), const Radius.circular(2)), Paint()..color = socksColor);
+      canvas.drawOval(const Rect.fromLTWH(13, 1, 6.5, 4.8), Paint()..color = const Color(0xFF111111));
     } else {
-      // Jambe Gauche : Cuisse + Chaussette haute + Crampon
+      // Jambe Gauche
       final leftY = -5.0;
       final leftX = -4.0 + legCycle;
       canvas.drawRRect(
-        RRect.fromRectAndRadius(Rect.fromLTWH(leftX - 3, leftY - 2, 7, 4), const Radius.circular(2)),
+        RRect.fromRectAndRadius(Rect.fromLTWH(leftX - 3, leftY - 2, 7.5, 4.2), const Radius.circular(2)),
         Paint()..color = socksColor,
       );
-      // Crampon gauche (noir avec semelle)
-      canvas.drawOval(Rect.fromLTWH(leftX + 2, leftY - 2.2, 5.5, 4.2), Paint()..color = const Color(0xFF111111));
+      canvas.drawOval(Rect.fromLTWH(leftX + 2.5, leftY - 2.2, 5.8, 4.5), Paint()..color = const Color(0xFF111111));
 
-      // Jambe Droite : Cuisse + Chaussette haute + Crampon
+      // Jambe Droite
       final rightY = 5.0;
       final rightX = -4.0 - legCycle;
       canvas.drawRRect(
-        RRect.fromRectAndRadius(Rect.fromLTWH(rightX - 3, rightY - 2, 7, 4), const Radius.circular(2)),
+        RRect.fromRectAndRadius(Rect.fromLTWH(rightX - 3, rightY - 2, 7.5, 4.2), const Radius.circular(2)),
         Paint()..color = socksColor,
       );
-      // Crampon droit
-      canvas.drawOval(Rect.fromLTWH(rightX + 2, rightY - 2.2, 5.5, 4.2), Paint()..color = const Color(0xFF111111));
+      canvas.drawOval(Rect.fromLTWH(rightX + 2.5, rightY - 2.2, 5.8, 4.5), Paint()..color = const Color(0xFF111111));
     }
 
     // --- SHORT DE MATCH ATHLÉTIQUE ---
     canvas.drawRRect(
-      RRect.fromRectAndRadius(const Rect.fromLTWH(-6.5, -6.0, 7.5, 12.0), const Radius.circular(3)),
+      RRect.fromRectAndRadius(const Rect.fromLTWH(-6.5, -6.5, 8.0, 13.0), const Radius.circular(3)),
       Paint()..color = shortsColor,
     );
     canvas.drawRRect(
-      RRect.fromRectAndRadius(const Rect.fromLTWH(-6.5, -6.0, 7.5, 12.0), const Radius.circular(3)),
+      RRect.fromRectAndRadius(const Rect.fromLTWH(-6.5, -6.5, 8.0, 13.0), const Radius.circular(3)),
       Paint()..color = Colors.black26..style = PaintingStyle.stroke..strokeWidth = 0.8,
     );
 
-    // --- BUSTE & MAILLOT OFFICIEL (Coupe athlétique en V) ---
+    // --- BUSTE & MAILLOT OFFICIEL (Ombrage 3D & reflets musculaires) ---
     final jerseyPath = Path()
-      ..moveTo(5.0, -8.0) // Épaule gauche
-      ..lineTo(5.0, 8.0) // Épaule droite
-      ..lineTo(-3.0, 6.0) // Hanche droite
-      ..lineTo(-3.0, -6.0) // Hanche gauche
+      ..moveTo(5.5, -8.5) // Épaule gauche
+      ..lineTo(5.5, 8.5) // Épaule droite
+      ..lineTo(-3.0, 6.5) // Hanche droite
+      ..lineTo(-3.0, -6.5) // Hanche gauche
       ..close();
 
-    canvas.drawPath(jerseyPath, Paint()..color = jerseyColor);
-    canvas.drawPath(jerseyPath, Paint()..color = Colors.black38..style = PaintingStyle.stroke..strokeWidth = 1.0);
+    // Dégradé 3D simulant l'éclairage des projecteurs sur la musculature
+    final jerseyShader = LinearGradient(
+      colors: [jerseyColor.withValues(alpha: 0.9), jerseyColor, Colors.black.withValues(alpha: 0.35)],
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+    ).createShader(const Rect.fromLTWH(-3, -8.5, 8.5, 17));
+
+    canvas.drawPath(jerseyPath, Paint()..shader = jerseyShader);
+    canvas.drawPath(jerseyPath, Paint()..color = Colors.black45..style = PaintingStyle.stroke..strokeWidth = 0.9);
+
+    // Brassard de capitaine doré sur joueur #10 ou #7
+    if (p.number == 10 || p.number == 7) {
+      canvas.drawRect(const Rect.fromLTWH(1.5, -9.0, 2.5, 4.0), Paint()..color = const Color(0xFFFFD166));
+    }
 
     // Col / Échancrure du maillot en couleur secondaire
     final collarPath = Path()
-      ..moveTo(4.0, -3.5)
-      ..lineTo(1.5, 0.0)
-      ..lineTo(4.0, 3.5)
+      ..moveTo(4.5, -3.5)
+      ..lineTo(2.0, 0.0)
+      ..lineTo(4.5, 3.5)
       ..close();
     canvas.drawPath(collarPath, Paint()..color = secondaryColor);
 
-    // Numéro de maillot sur le dos (Typographie officielle)
+    // Numéro officiel de maillot sur le dos
     final numSpan = TextSpan(
       text: '${p.number}',
       style: TextStyle(
@@ -976,45 +1195,50 @@ class _FootballPitchPainter extends CustomPainter {
     numPainter.paint(canvas, Offset(-1.5 - numPainter.width / 2, -numPainter.height / 2));
 
     // --- BRAS ATHLÉTIQUES & GANTS DE GARDIEN ---
-    final armSwing = math.sin(p.animTime) * 3.5;
-    // Bras Gauche
+    final armSwing = math.sin(p.animTime) * 3.8;
     canvas.drawOval(
-      Rect.fromCenter(center: Offset(2.0 - armSwing, -9.0), width: 6.5, height: 3.5),
+      Rect.fromCenter(center: Offset(2.2 - armSwing, -9.5), width: 6.8, height: 3.8),
       Paint()..color = p.skinTone,
     );
-    // Bras Droit
     canvas.drawOval(
-      Rect.fromCenter(center: Offset(2.0 + armSwing, 9.0), width: 6.5, height: 3.5),
+      Rect.fromCenter(center: Offset(2.2 + armSwing, 9.5), width: 6.8, height: 3.8),
       Paint()..color = p.skinTone,
     );
 
     // Gants de gardien rembourrés pour les goals
     if (isGk) {
-      canvas.drawCircle(Offset(4.5 - armSwing, -9.0), 3.0, Paint()..color = const Color(0xFFFF5722));
-      canvas.drawCircle(Offset(4.5 + armSwing, 9.0), 3.0, Paint()..color = const Color(0xFFFF5722));
+      canvas.drawCircle(Offset(4.8 - armSwing, -9.5), 3.2, Paint()..color = const Color(0xFFFF5722));
+      canvas.drawCircle(Offset(4.8 + armSwing, 9.5), 3.2, Paint()..color = const Color(0xFFFF5722));
     }
 
-    // --- TÊTE & COUPE DE CHEVEUX SCULPTÉE ---
-    // Cou
-    canvas.drawCircle(const Offset(3.0, 0.0), 3.2, Paint()..color = p.skinTone);
-    // Tête anatomique
+    // --- TÊTE AVEC ORIENTATION VISUELLE VERS LE BALLON ---
+    final double headRelX = ballPos.dx * size.width - px;
+    final double headRelY = ballPos.dy * size.height - py;
+    final double headAngle = (math.atan2(headRelY, headRelX) - p.facingAngle).clamp(-0.4, 0.4);
+
+    canvas.save();
+    canvas.rotate(headAngle);
+
+    // Cou & Tête sculptée
+    canvas.drawCircle(const Offset(3.2, 0.0), 3.4, Paint()..color = p.skinTone);
     canvas.drawOval(
-      const Rect.fromLTWH(1.5, -4.0, 7.5, 8.0),
+      const Rect.fromLTWH(1.5, -4.2, 7.8, 8.4),
       Paint()..color = p.skinTone,
     );
     // Cheveux sculptés
     final hairPaint = Paint()..color = p.hairColor;
     canvas.drawArc(
-      const Rect.fromLTWH(0.8, -4.2, 6.0, 8.4),
+      const Rect.fromLTWH(0.8, -4.4, 6.2, 8.8),
       math.pi / 2,
       math.pi,
       true,
       hairPaint,
     );
+    canvas.restore();
 
     canvas.restore();
 
-    // 3. Étiquette broadcast avec Nom du joueur & Numéro façon PES TV
+    // 3. Étiquette PES TV broadcast au-dessus du joueur
     final textSpan = TextSpan(
       text: '${p.number} ${p.name.toUpperCase()}',
       style: TextStyle(
@@ -1026,7 +1250,6 @@ class _FootballPitchPainter extends CustomPainter {
     );
     final textPainter = TextPainter(text: textSpan, textDirection: TextDirection.ltr)..layout();
 
-    // Fond étiquette noir translucide
     final badgeRect = Rect.fromCenter(
       center: Offset(px, py + 14),
       width: textPainter.width + 8,
@@ -1034,7 +1257,7 @@ class _FootballPitchPainter extends CustomPainter {
     );
     canvas.drawRRect(
       RRect.fromRectAndRadius(badgeRect, const Radius.circular(4)),
-      Paint()..color = Colors.black.withValues(alpha: 0.65),
+      Paint()..color = Colors.black.withValues(alpha: 0.70),
     );
     textPainter.paint(canvas, Offset(px - textPainter.width / 2, py + 14 - textPainter.height / 2));
 
