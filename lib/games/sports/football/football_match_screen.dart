@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'football_models.dart';
 import 'football_engine.dart';
 import '../../../services/storage_service.dart';
@@ -65,6 +66,12 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
   bool _isChargingShot = false;
   FootballCameraMode _cameraMode = FootballCameraMode.broadcast;
   FootballPlayer? _lastScorer;
+  Offset _cameraOffset = const Offset(0.50, 0.50);
+
+  // Contrôles Clavier & Manette
+  final FocusNode _focusNode = FocusNode();
+  final Set<LogicalKeyboardKey> _activeKeys = {};
+  bool _isTouchJoystickActive = false;
 
   // Effets vivants de stade & supporters
   double _crowdAnimTime = 0.0;
@@ -85,12 +92,132 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
       ..repeat();
 
     StorageService.recordGamePlayed('football');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
   }
 
   @override
   void dispose() {
+    _focusNode.dispose();
     _ticker.dispose();
     super.dispose();
+  }
+
+  void _cycleCamera() {
+    FeedbackService.triggerSelection();
+    setState(() {
+      switch (_cameraMode) {
+        case FootballCameraMode.broadcast:
+          _cameraMode = FootballCameraMode.action;
+          break;
+        case FootballCameraMode.action:
+          _cameraMode = FootballCameraMode.tactical;
+          break;
+        case FootballCameraMode.tactical:
+          _cameraMode = FootballCameraMode.broadcast;
+          break;
+      }
+    });
+  }
+
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    final teamAHasBall = _engine.ballCarrier != null && widget.teamA.players.contains(_engine.ballCarrier);
+
+    if (event is KeyDownEvent) {
+      _activeKeys.add(event.logicalKey);
+
+      // Espace / Touche L : Tir ou Tacle
+      if (event.logicalKey == LogicalKeyboardKey.space || event.logicalKey == LogicalKeyboardKey.keyL) {
+        if (teamAHasBall) {
+          setState(() {
+            _isChargingShot = true;
+            _shotCharge = 0.2;
+          });
+        } else {
+          _engine.tackleBall();
+        }
+        return KeyEventResult.handled;
+      }
+
+      // X / J : Passe courte ou Changement de joueur
+      if (event.logicalKey == LogicalKeyboardKey.keyX || event.logicalKey == LogicalKeyboardKey.keyJ) {
+        if (teamAHasBall) {
+          _engine.passBall();
+        } else {
+          _engine.switchActivePlayer();
+        }
+        return KeyEventResult.handled;
+      }
+
+      // C / F : Tacle ou Pressing
+      if (event.logicalKey == LogicalKeyboardKey.keyC || event.logicalKey == LogicalKeyboardKey.keyF) {
+        _engine.tackleBall();
+        return KeyEventResult.handled;
+      }
+
+      // V : Passe longue / Centre / Lob
+      if (event.logicalKey == LogicalKeyboardKey.keyV) {
+        if (teamAHasBall) {
+          _engine.shootBall(0.60);
+        } else {
+          _engine.tackleBall();
+        }
+        return KeyEventResult.handled;
+      }
+
+      // Touche C pour changer de caméra
+      if (event.logicalKey == LogicalKeyboardKey.tab) {
+        _cycleCamera();
+        return KeyEventResult.handled;
+      }
+    } else if (event is KeyUpEvent) {
+      _activeKeys.remove(event.logicalKey);
+
+      if (event.logicalKey == LogicalKeyboardKey.space || event.logicalKey == LogicalKeyboardKey.keyL) {
+        if (_isChargingShot) {
+          setState(() => _isChargingShot = false);
+          _engine.shootBall(_shotCharge);
+        }
+        return KeyEventResult.handled;
+      }
+    }
+
+    _updateKeyboardDirection();
+    return KeyEventResult.handled;
+  }
+
+  void _updateKeyboardDirection() {
+    final up = _activeKeys.contains(LogicalKeyboardKey.keyW) ||
+        _activeKeys.contains(LogicalKeyboardKey.keyZ) ||
+        _activeKeys.contains(LogicalKeyboardKey.arrowUp);
+    final down = _activeKeys.contains(LogicalKeyboardKey.keyS) ||
+        _activeKeys.contains(LogicalKeyboardKey.arrowDown);
+    final left = _activeKeys.contains(LogicalKeyboardKey.keyA) ||
+        _activeKeys.contains(LogicalKeyboardKey.keyQ) ||
+        _activeKeys.contains(LogicalKeyboardKey.arrowLeft);
+    final right = _activeKeys.contains(LogicalKeyboardKey.keyD) ||
+        _activeKeys.contains(LogicalKeyboardKey.arrowRight);
+
+    final sprint = _activeKeys.contains(LogicalKeyboardKey.shiftLeft) ||
+        _activeKeys.contains(LogicalKeyboardKey.shiftRight) ||
+        _activeKeys.contains(LogicalKeyboardKey.keyR);
+
+    double dx = 0.0;
+    double dy = 0.0;
+    if (up) dy -= 1.0;
+    if (down) dy += 1.0;
+    if (left) dx -= 1.0;
+    if (right) dx += 1.0;
+
+    if (dx != 0.0 || dy != 0.0) {
+      final mag = math.sqrt(dx * dx + dy * dy);
+      _engine.joystickA = Offset(dx / mag, dy / mag);
+    } else if (!_isTouchJoystickActive) {
+      _engine.joystickA = Offset.zero;
+    }
+
+    _engine.isSprintingA = sprint;
   }
 
   void _onTick() {
@@ -106,6 +233,15 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
     if (_isChargingShot) {
       _shotCharge = (_shotCharge + dt * 1.5).clamp(0.0, 1.0);
     }
+
+    // Suivi fluide de la caméra façon TV Broadcast PES (avec anticipation du jeu)
+    final targetPos = _engine.ballCarrier?.pos ?? _engine.ballPos;
+    final leadX = (_engine.ballVelocity.dx * 0.12).clamp(-0.06, 0.06);
+    final camTarget = Offset(
+      (targetPos.dx + leadX).clamp(0.12, 0.88),
+      targetPos.dy.clamp(0.18, 0.82),
+    );
+    _cameraOffset = Offset.lerp(_cameraOffset, camTarget, 0.08)!;
 
     setState(() {
       _engine.update(dt);
@@ -281,188 +417,220 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
   @override
   Widget build(BuildContext context) {
     final teamAHasBall = _engine.ballCarrier != null && widget.teamA.players.contains(_engine.ballCarrier);
+    final isWide = MediaQuery.of(context).size.width >= 700;
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF070B14),
-      body: SafeArea(
+    final pitchWidget = Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0E1A2B),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white24, width: 2),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.8), blurRadius: 20),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
         child: Stack(
           children: [
-            Column(
-              children: [
-                // 1. Scoreboard HUD façon PES 2017
-                _buildScoreboardHUD(),
-
-                // 2. Terrain de Football (Pelouse 3D, Supporters vivants & Joueurs)
-                Expanded(
-                  flex: 6,
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0E1A2B),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.white24, width: 2),
-                      boxShadow: [
-                        BoxShadow(color: Colors.black.withValues(alpha: 0.8), blurRadius: 20),
-                      ],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(14),
-                      child: Stack(
-                        children: [
-                          CustomPaint(
-                            size: Size.infinite,
-                            painter: _FootballPitchPainter(
-                              teamA: widget.teamA,
-                              teamB: widget.teamB,
-                              activePlayerA: _engine.activePlayerA,
-                              activePlayerB: _engine.activePlayerB,
-                              ballPos: _engine.ballPos,
-                              ballHeight: _engine.ballHeight,
-                              cameraMode: _cameraMode,
-                              crowdAnimTime: _crowdAnimTime,
-                              turfParticles: _turfParticles,
-                              cameraFlashes: _cameraFlashes,
-                              goalNetBulge: _goalNetBulge,
-                            ),
-                          ),
-
-                          // Bouton Sélecteur de Caméra PES
-                          Positioned(
-                            top: 8,
-                            right: 8,
-                            child: GestureDetector(
-                              onTap: () {
-                                FeedbackService.triggerSelection();
-                                setState(() {
-                                  switch (_cameraMode) {
-                                    case FootballCameraMode.broadcast:
-                                      _cameraMode = FootballCameraMode.action;
-                                      break;
-                                    case FootballCameraMode.action:
-                                      _cameraMode = FootballCameraMode.tactical;
-                                      break;
-                                    case FootballCameraMode.tactical:
-                                      _cameraMode = FootballCameraMode.broadcast;
-                                      break;
-                                  }
-                                });
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withValues(alpha: 0.80),
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(color: const Color(0xFF00FFCC), width: 1.5),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: const Color(0xFF00FFCC).withValues(alpha: 0.35),
-                                      blurRadius: 8,
-                                    ),
-                                  ],
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(Icons.videocam, color: Color(0xFF00FFCC), size: 14),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      _cameraMode == FootballCameraMode.broadcast
-                                          ? 'VUE : TÉLÉ PES'
-                                          : (_cameraMode == FootballCameraMode.action ? 'VUE : ACTION 3D' : 'VUE : TACTIQUE'),
-                                      style: const TextStyle(
-                                        color: Color(0xFF00FFCC),
-                                        fontWeight: FontWeight.w900,
-                                        fontSize: 10,
-                                        letterSpacing: 0.8,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-
-                          // Radar minimap en bas au centre
-                          Positioned(
-                            bottom: 8,
-                            left: 0,
-                            right: 0,
-                            child: Center(
-                              child: _buildRadarMinimap(),
-                            ),
-                          ),
-
-                          // Carte Athlétique 3D du Joueur Actif
-                          Positioned(
-                            bottom: 8,
-                            left: 8,
-                            child: _buildActivePlayerHUDCard(),
-                          ),
-
-                          // Jauge de tir en charge
-                          if (_isChargingShot)
-                            Positioned(
-                              top: 20,
-                              left: 60,
-                              right: 60,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                decoration: BoxDecoration(
-                                  color: Colors.black87,
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(color: const Color(0xFFFF0055), width: 1.5),
-                                ),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Text('PUISSANCE DU TIR', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                                    const SizedBox(height: 4),
-                                    ClipRRect(
-                                      borderRadius: BorderRadius.circular(4),
-                                      child: LinearProgressIndicator(
-                                        value: _shotCharge,
-                                        backgroundColor: Colors.white24,
-                                        valueColor: AlwaysStoppedAnimation(
-                                          _shotCharge > 0.85 ? Colors.redAccent : const Color(0xFF00FFCC),
-                                        ),
-                                        minHeight: 8,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-
-                // 3. Panneau de Contrôle Inférieur (Joystick Virtuel & Boutons PES)
-                Expanded(
-                  flex: 4,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    color: const Color(0xFF0A0F1D),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        // Joystick Directionnel Gauche
-                        _buildVirtualJoystick(),
-
-                        // Boutons d'Action Droite (Attaque ou Défense)
-                        _buildActionPad(teamAHasBall: teamAHasBall),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
+            CustomPaint(
+              size: Size.infinite,
+              painter: _FootballPitchPainter(
+                teamA: widget.teamA,
+                teamB: widget.teamB,
+                activePlayerA: _engine.activePlayerA,
+                activePlayerB: _engine.activePlayerB,
+                ballPos: _engine.ballPos,
+                ballHeight: _engine.ballHeight,
+                cameraMode: _cameraMode,
+                cameraOffset: _cameraOffset,
+                passTargetPos: _engine.passTargetPos,
+                passTrajectoryTimer: _engine.passTrajectoryTimer,
+                kickAnimTimerA: _engine.kickAnimTimerA,
+                crowdAnimTime: _crowdAnimTime,
+                turfParticles: _turfParticles,
+                cameraFlashes: _cameraFlashes,
+                goalNetBulge: _goalNetBulge,
+              ),
             ),
 
-            // Goal Celebration Replay avec Rendu 3D Photoréaliste du Buteur
-            if (_showGoalBanner)
-              _buildCinematicGoalCutscene(),
+            // Bouton Sélecteur de Caméra PES
+            Positioned(
+              top: 8,
+              right: 8,
+              child: GestureDetector(
+                onTap: _cycleCamera,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.80),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFF00FFCC), width: 1.5),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF00FFCC).withValues(alpha: 0.35),
+                        blurRadius: 8,
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.videocam, color: Color(0xFF00FFCC), size: 14),
+                      const SizedBox(width: 4),
+                      Text(
+                        _cameraMode == FootballCameraMode.broadcast
+                            ? 'VUE : TÉLÉ PES'
+                            : (_cameraMode == FootballCameraMode.action ? 'VUE : ACTION 3D' : 'VUE : TACTIQUE'),
+                        style: const TextStyle(
+                          color: Color(0xFF00FFCC),
+                          fontWeight: FontWeight.w900,
+                          fontSize: 10,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            // Radar minimap en bas au centre + HUD Clavier en mode bureau
+            Positioned(
+              bottom: 8,
+              left: 0,
+              right: 0,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildRadarMinimap(),
+                  if (isWide) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.85),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFF00FFCC).withValues(alpha: 0.4)),
+                        boxShadow: const [BoxShadow(color: Colors.black87, blurRadius: 6)],
+                      ),
+                      child: const Text(
+                        '🎮 CLAVIER / MANETTE :  ZQSD / Flèches = Déplacer  •  X = Passe  •  Espace = Tir  •  Shift = Sprint  •  C = Tacle  •  V = Centre',
+                        style: TextStyle(color: Color(0xFF00FFCC), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.6),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+
+            // Carte Athlétique 3D du Joueur Actif
+            Positioned(
+              bottom: 8,
+              left: 8,
+              child: _buildActivePlayerHUDCard(),
+            ),
+
+            // En mode bureau large, les boutons virtuels restent accessibles en surimpression semi-transparente
+            if (isWide) ...[
+              Positioned(
+                bottom: 8,
+                left: 175,
+                child: Opacity(
+                  opacity: 0.55,
+                  child: Transform.scale(scale: 0.82, child: _buildVirtualJoystick()),
+                ),
+              ),
+              Positioned(
+                bottom: 8,
+                right: 8,
+                child: Opacity(
+                  opacity: 0.65,
+                  child: Transform.scale(scale: 0.85, child: _buildActionPad(teamAHasBall: teamAHasBall)),
+                ),
+              ),
+            ],
+
+            // Jauge de tir en charge
+            if (_isChargingShot)
+              Positioned(
+                top: 20,
+                left: 60,
+                right: 60,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.black87,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: const Color(0xFFFF0055), width: 1.5),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('PUISSANCE DU TIR', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 4),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: _shotCharge,
+                          backgroundColor: Colors.white24,
+                          valueColor: AlwaysStoppedAnimation(
+                            _shotCharge > 0.85 ? Colors.redAccent : const Color(0xFF00FFCC),
+                          ),
+                          minHeight: 8,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
           ],
+        ),
+      ),
+    );
+
+    return Focus(
+      focusNode: _focusNode,
+      autofocus: true,
+      onKeyEvent: _handleKeyEvent,
+      child: Scaffold(
+        backgroundColor: const Color(0xFF070B14),
+        body: SafeArea(
+          child: Stack(
+            children: [
+              Column(
+                children: [
+                  // 1. Scoreboard HUD façon PES 2017
+                  _buildScoreboardHUD(),
+
+                  // 2. Terrain de Football (Pelouse 3D, Supporters vivants & Joueurs)
+                  if (isWide)
+                    Expanded(child: pitchWidget)
+                  else ...[
+                    Expanded(flex: 7, child: pitchWidget),
+                    Expanded(
+                      flex: 3,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                        color: const Color(0xFF0A0F1D),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            _buildVirtualJoystick(),
+                            _buildActionPad(teamAHasBall: teamAHasBall),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+
+              // Goal Celebration Replay avec Rendu 3D Photoréaliste du Buteur
+              if (_showGoalBanner)
+                _buildCinematicGoalCutscene(),
+            ],
+          ),
         ),
       ),
     );
@@ -751,6 +919,7 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
 
   Widget _buildVirtualJoystick() {
     return GestureDetector(
+      onPanDown: (_) => setState(() => _isTouchJoystickActive = true),
       onPanUpdate: (details) {
         final localPos = details.localPosition - const Offset(55, 55);
         final dist = localPos.distance;
@@ -764,6 +933,13 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
       },
       onPanEnd: (_) {
         setState(() {
+          _isTouchJoystickActive = false;
+          _engine.joystickA = Offset.zero;
+        });
+      },
+      onPanCancel: () {
+        setState(() {
+          _isTouchJoystickActive = false;
           _engine.joystickA = Offset.zero;
         });
       },
@@ -992,6 +1168,10 @@ class _FootballPitchPainter extends CustomPainter {
   final Offset ballPos;
   final double ballHeight;
   final FootballCameraMode cameraMode;
+  final Offset cameraOffset;
+  final Offset? passTargetPos;
+  final double passTrajectoryTimer;
+  final double kickAnimTimerA;
   final double crowdAnimTime;
   final List<TurfParticle> turfParticles;
   final List<StadiumFlash> cameraFlashes;
@@ -1005,6 +1185,10 @@ class _FootballPitchPainter extends CustomPainter {
     required this.ballPos,
     required this.ballHeight,
     required this.cameraMode,
+    required this.cameraOffset,
+    required this.passTargetPos,
+    required this.passTrajectoryTimer,
+    required this.kickAnimTimerA,
     required this.crowdAnimTime,
     required this.turfParticles,
     required this.cameraFlashes,
@@ -1013,15 +1197,30 @@ class _FootballPitchPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    final double zoom;
+    switch (cameraMode) {
+      case FootballCameraMode.broadcast:
+        zoom = 1.95; // Caméra téléviseur PES
+        break;
+      case FootballCameraMode.action:
+        zoom = 2.65; // Caméra action rapprochée
+        break;
+      case FootballCameraMode.tactical:
+        zoom = 1.0; // Vue tactique globale
+        break;
+    }
+
     canvas.save();
 
-    if (cameraMode == FootballCameraMode.action) {
-      // Zoom caméra dynamique action centrée sur la zone de jeu du ballon
-      final targetX = ballPos.dx * size.width;
-      final targetY = ballPos.dy * size.height;
+    if (zoom > 1.0) {
+      final halfSpanX = 0.5 / zoom;
+      final halfSpanY = 0.5 / zoom;
+      final clampedX = cameraOffset.dx.clamp(halfSpanX, 1.0 - halfSpanX);
+      final clampedY = cameraOffset.dy.clamp(halfSpanY * 0.75, 1.0 - halfSpanY * 0.75);
+
       canvas.translate(size.width * 0.5, size.height * 0.5);
-      canvas.scale(1.30);
-      canvas.translate(-targetX, -targetY);
+      canvas.scale(zoom);
+      canvas.translate(-clampedX * size.width, -clampedY * size.height);
     }
 
     // 1. TRIBUNES DES SUPPORTERS VIVANTES EN HAUT DU TERRAIN (Stade en ébullition)
@@ -1192,14 +1391,52 @@ class _FootballPitchPainter extends CustomPainter {
       );
     }
 
+    // Trajectoire de passe PES avec flèche et anneau de réception
+    if (passTargetPos != null && passTrajectoryTimer > 0) {
+      final passAlpha = (passTrajectoryTimer * 0.9).clamp(0.0, 0.9);
+      final pStart = Offset(ballPos.dx * size.width, ballPos.dy * size.height);
+      final pEnd = Offset(passTargetPos!.dx * size.width, passTargetPos!.dy * size.height);
+
+      final passPaint = Paint()
+        ..color = const Color(0xFF00FFCC).withValues(alpha: passAlpha)
+        ..strokeWidth = 2.5
+        ..style = PaintingStyle.stroke;
+      canvas.drawLine(pStart, pEnd, passPaint);
+
+      final targetRingPaint = Paint()
+        ..color = const Color(0xFF00FFCC).withValues(alpha: passAlpha)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.0;
+      canvas.drawCircle(pEnd, 12.0 * (1.0 + (1.0 - passTrajectoryTimer) * 0.5), targetRingPaint);
+      canvas.drawCircle(pEnd, 3.5, Paint()..color = const Color(0xFF00FFCC).withValues(alpha: passAlpha));
+    }
+
     // 8. DESSIN DES JOUEURS VIVANTS & ATHLÉTIQUES TEAM A
     for (final p in teamA.players) {
-      _drawLivingPlayer(canvas, size, p, teamA.primaryColor, teamA.secondaryColor, isControlled: p == activePlayerA, ballPos: ballPos);
+      _drawLivingPlayer(
+        canvas,
+        size,
+        p,
+        teamA.primaryColor,
+        teamA.secondaryColor,
+        isControlled: p == activePlayerA,
+        ballPos: ballPos,
+        kickAnimTimer: p == activePlayerA ? kickAnimTimerA : 0.0,
+      );
     }
 
     // 9. DESSIN DES JOUEURS VIVANTS & ATHLÉTIQUES TEAM B
     for (final p in teamB.players) {
-      _drawLivingPlayer(canvas, size, p, teamB.primaryColor, teamB.secondaryColor, isControlled: p == activePlayerB, ballPos: ballPos);
+      _drawLivingPlayer(
+        canvas,
+        size,
+        p,
+        teamB.primaryColor,
+        teamB.secondaryColor,
+        isControlled: p == activePlayerB,
+        ballPos: ballPos,
+        kickAnimTimer: 0.0,
+      );
     }
 
     // 10. BALLON TELSTAR 3D AVEC TEXTURE CUIR & OMBRE PORTÉE ÉLEVÉE
@@ -1264,6 +1501,7 @@ class _FootballPitchPainter extends CustomPainter {
     Color secondaryColor, {
     required bool isControlled,
     required Offset ballPos,
+    required double kickAnimTimer,
   }) {
     final px = p.pos.dx * size.width;
     final py = p.pos.dy * size.height;
@@ -1302,6 +1540,22 @@ class _FootballPitchPainter extends CustomPainter {
       canvas.drawRRect(RRect.fromRectAndRadius(const Rect.fromLTWH(-10, -5, 8, 4.5), const Radius.circular(2)), Paint()..color = socksColor);
       canvas.drawRRect(RRect.fromRectAndRadius(const Rect.fromLTWH(0, 2, 16, 4.5), const Radius.circular(2)), Paint()..color = socksColor);
       canvas.drawOval(const Rect.fromLTWH(13, 1, 6.5, 4.8), Paint()..color = const Color(0xFF111111));
+    } else if (kickAnimTimer > 0) {
+      // Pose athlétique de tir / frappe de balle PES
+      final kickPhase = (kickAnimTimer / 0.40).clamp(0.0, 1.0);
+      final kickReach = 4.0 + (1.0 - kickPhase) * 14.0;
+      // Jambe d'appui
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(const Rect.fromLTWH(-5, -7, 7, 4.2), const Radius.circular(2)),
+        Paint()..color = socksColor,
+      );
+      canvas.drawOval(const Rect.fromLTWH(1, -7.2, 5.5, 4.5), Paint()..color = const Color(0xFF111111));
+      // Jambe de frappe détendue vers l'avant !
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(Rect.fromLTWH(kickReach - 4, 3, 10, 4.5), const Radius.circular(2)),
+        Paint()..color = socksColor,
+      );
+      canvas.drawOval(Rect.fromLTWH(kickReach + 5, 2.8, 6.5, 5.0), Paint()..color = const Color(0xFFFF0055));
     } else {
       // Jambe Gauche
       final leftY = -5.0;

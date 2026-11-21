@@ -33,6 +33,10 @@ class FootballEngine {
 
   bool isSprintingA = false;
   Offset joystickA = Offset.zero;
+  FootballPlayer? passReceiver;
+  Offset? passTargetPos;
+  double passTrajectoryTimer = 0.0;
+  double kickAnimTimerA = 0.0;
 
   // Callback événements
   VoidCallback? onGoal;
@@ -123,6 +127,36 @@ class FootballEngine {
     }
 
     // 4. Mouvement du joueur contrôlé par l'utilisateur (Team A)
+    if (kickAnimTimerA > 0) {
+      kickAnimTimerA = math.max(0.0, kickAnimTimerA - dt * 3.5);
+    }
+
+    if (passTrajectoryTimer > 0) {
+      passTrajectoryTimer = math.max(0.0, passTrajectoryTimer - dt * 1.8);
+      if (passTrajectoryTimer <= 0) passTargetPos = null;
+    }
+
+    if (passReceiver != null) {
+      final toBall = ballPos - passReceiver!.pos;
+      final dist = toBall.distance;
+      if (dist > 0.03) {
+        final step = (toBall / dist) * (0.28 * dt);
+        passReceiver!.pos += step;
+        final targetAngle = math.atan2(toBall.dy, toBall.dx);
+        passReceiver!.facingAngle = lerpAngle(passReceiver!.facingAngle, targetAngle, 0.25);
+        passReceiver!.animTime += dt * 15.0;
+      } else if (ballCarrier == null && ballHeight < 0.15) {
+        // Prise de balle dynamique par le récepteur démarqué
+        ballCarrier = passReceiver;
+        activePlayerA.isControlled = false;
+        activePlayerA = passReceiver!;
+        activePlayerA.isControlled = true;
+        passReceiver = null;
+        passTargetPos = null;
+        FeedbackService.triggerSelection();
+      }
+    }
+
     double speedMultiplier = isSprintingA ? 0.28 : 0.18;
     if (joystickA != Offset.zero) {
       final moveDelta = joystickA * (speedMultiplier * dt);
@@ -130,12 +164,14 @@ class FootballEngine {
         (activePlayerA.pos.dx + moveDelta.dx).clamp(0.04, 0.96),
         (activePlayerA.pos.dy + moveDelta.dy).clamp(0.05, 0.95),
       );
-      activePlayerA.facingAngle = math.atan2(joystickA.dy, joystickA.dx);
+      final targetAngle = math.atan2(joystickA.dy, joystickA.dx);
+      activePlayerA.facingAngle = lerpAngle(activePlayerA.facingAngle, targetAngle, 0.25);
       activePlayerA.animTime += dt * (isSprintingA ? 16.0 : 10.0);
     } else {
       final toBall = ballPos - activePlayerA.pos;
       if (toBall.distance > 0.01) {
-        activePlayerA.facingAngle = math.atan2(toBall.dy, toBall.dx);
+        final targetAngle = math.atan2(toBall.dy, toBall.dx);
+        activePlayerA.facingAngle = lerpAngle(activePlayerA.facingAngle, targetAngle, 0.15);
       }
     }
 
@@ -329,10 +365,20 @@ class FootballEngine {
     }
   }
 
+  static double lerpAngle(double a, double b, double t) {
+    double diff = (b - a) % (math.pi * 2);
+    if (diff > math.pi) diff -= math.pi * 2;
+    if (diff < -math.pi) diff += math.pi * 2;
+    return a + diff * t;
+  }
+
   // --- ACTIONS DU JOUEUR PRINCIPAL (TEAM A) ---
 
   void passBall() {
     if (ballCarrier == null || !teamA.players.contains(ballCarrier)) return;
+
+    final passer = ballCarrier!;
+    kickAnimTimerA = 0.35;
 
     // Cherche le meilleur coéquipier libre dans la direction du joystick ou vers l'avant
     FootballPlayer? targetTeammate;
@@ -341,9 +387,9 @@ class FootballEngine {
     final lookDir = joystickA != Offset.zero ? joystickA : const Offset(1.0, 0.0);
 
     for (final mate in teamA.players) {
-      if (mate == ballCarrier || mate.role == PlayerRole.gk) continue;
+      if (mate == passer || mate.role == PlayerRole.gk) continue;
 
-      final toMate = mate.pos - ballCarrier!.pos;
+      final toMate = mate.pos - passer.pos;
       final dist = toMate.distance;
       if (dist < 0.05) continue;
 
@@ -351,7 +397,7 @@ class FootballEngine {
       final alignment = normalizedToMate.dx * lookDir.dx + normalizedToMate.dy * lookDir.dy;
 
       // Score combinant proximité et bon angle de passe
-      final score = alignment * 2.0 - (dist * 1.5);
+      final score = alignment * 2.5 - (dist * 1.2);
       if (score > bestScore) {
         bestScore = score;
         targetTeammate = mate;
@@ -360,23 +406,34 @@ class FootballEngine {
 
     Offset passDir = const Offset(1.0, 0.0);
     if (targetTeammate != null) {
-      passDir = (targetTeammate.pos - ballCarrier!.pos);
-      passDir = passDir / passDir.distance;
-      activePlayerA.isControlled = false;
-      activePlayerA = targetTeammate;
-      activePlayerA.isControlled = true;
-    } else if (joystickA != Offset.zero) {
-      passDir = joystickA;
+      // Passe avec anticipation (lead pass dans la course)
+      final lead = Offset(0.025, 0.0);
+      final dest = targetTeammate.pos + lead;
+      passDir = (dest - passer.pos);
+      final dist = passDir.distance;
+      passDir = passDir / dist;
+
+      passReceiver = targetTeammate;
+      passTargetPos = dest;
+      passTrajectoryTimer = 1.0;
+
+      ballCarrier = null;
+      ballVelocity = passDir * (0.65 + dist * 0.35).clamp(0.60, 0.90);
+    } else {
+      if (joystickA != Offset.zero) {
+        passDir = joystickA;
+      }
+      ballCarrier = null;
+      ballVelocity = passDir * 0.65;
     }
 
-    ballCarrier = null;
-    ballVelocity = passDir * 0.70;
     FeedbackService.triggerImpact();
   }
 
   void shootBall(double powerFraction) {
     if (ballCarrier == null || !teamA.players.contains(ballCarrier)) return;
 
+    kickAnimTimerA = 0.40;
     shotsA++;
     final clampedPower = powerFraction.clamp(0.4, 1.0);
     final goalTarget = Offset(1.0, 0.45 + (math.Random().nextDouble() * 0.10));
