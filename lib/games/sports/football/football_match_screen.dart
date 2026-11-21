@@ -64,6 +64,7 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
   double _shotCharge = 0.0;
   bool _isChargingShot = false;
   FootballCameraMode _cameraMode = FootballCameraMode.broadcast;
+  FootballPlayer? _lastScorer;
 
   // Effets vivants de stade & supporters
   double _crowdAnimTime = 0.0;
@@ -155,7 +156,15 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
   }
 
   void _handleGoal() {
+    FootballPlayer scorer;
+    if (_engine.ballPos.dx > 0.8) {
+      scorer = _engine.ballCarrier ?? widget.teamA.players.firstWhere((p) => p.role == PlayerRole.fwd, orElse: () => widget.teamA.players.first);
+    } else {
+      scorer = _engine.ballCarrier ?? widget.teamB.players.firstWhere((p) => p.role == PlayerRole.fwd, orElse: () => widget.teamB.players.first);
+    }
+
     setState(() {
+      _lastScorer = scorer;
       _showGoalBanner = true;
       _goalMessage = 'GOOOOOOAL !';
       _goalNetBulge = 1.0; // Vibration intense du filet
@@ -163,7 +172,7 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
 
     FeedbackService.triggerSuccess();
 
-    Future.delayed(const Duration(milliseconds: 2400), () {
+    Future.delayed(const Duration(milliseconds: 3200), () {
       if (!mounted) return;
       setState(() {
         _showGoalBanner = false;
@@ -383,6 +392,13 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
                             ),
                           ),
 
+                          // Carte Athlétique 3D du Joueur Actif
+                          Positioned(
+                            bottom: 8,
+                            left: 8,
+                            child: _buildActivePlayerHUDCard(),
+                          ),
+
                           // Jauge de tir en charge
                           if (_isChargingShot)
                             Positioned(
@@ -443,43 +459,208 @@ class _FootballMatchScreenState extends State<FootballMatchScreen> with SingleTi
               ],
             ),
 
-            // Goal Celebration Overlay avec fumigènes et confettis
+            // Goal Celebration Replay avec Rendu 3D Photoréaliste du Buteur
             if (_showGoalBanner)
-              Positioned.fill(
-                child: Container(
-                  color: Colors.black.withValues(alpha: 0.65),
-                  child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
+              _buildCinematicGoalCutscene(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActivePlayerHUDCard() {
+    final player = _engine.activePlayerA;
+    final asset = player.avatarAsset ?? 'assets/images/players/striker_mbappe_3d.jpg';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF00FFCC), width: 1.2),
+        boxShadow: const [BoxShadow(color: Colors.black87, blurRadius: 10)],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Image.asset(
+              asset,
+              width: 32,
+              height: 32,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) => const Icon(Icons.person, color: Color(0xFF00FFCC), size: 28),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    '#${player.number} ${player.name.toUpperCase()}',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 11),
+                  ),
+                  const SizedBox(width: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00FFCC).withValues(alpha: 0.25),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      '${player.overallRating}',
+                      style: const TextStyle(color: Color(0xFF00FFCC), fontSize: 9, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  const Icon(Icons.flash_on, color: Color(0xFFFFD166), size: 10),
+                  const SizedBox(width: 2),
+                  SizedBox(
+                    width: 55,
+                    child: LinearProgressIndicator(
+                      value: _engine.isSprintingA ? 0.65 : 1.0,
+                      backgroundColor: Colors.white24,
+                      valueColor: const AlwaysStoppedAnimation(Color(0xFF00FFCC)),
+                      minHeight: 3,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCinematicGoalCutscene() {
+    final scorer = _lastScorer ?? widget.teamA.players.firstWhere((p) => p.role == PlayerRole.fwd);
+    final asset = scorer.avatarAsset ?? (scorer.name == 'Vinicius' ? 'assets/images/players/madrid_star_3d.jpg' : 'assets/images/players/striker_mbappe_3d.jpg');
+
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black.withValues(alpha: 0.85),
+        child: Center(
+          child: Container(
+            width: 320,
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF1E2842), Color(0xFF0A0F1D), Color(0xFF050811)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: const Color(0xFFFFD166), width: 2),
+              boxShadow: [
+                BoxShadow(color: const Color(0xFFFFD166).withValues(alpha: 0.4), blurRadius: 28),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Badge Replay Broadcast HD
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(color: const Color(0xFFFF0055), borderRadius: BorderRadius.circular(6)),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.fiber_manual_record, color: Colors.white, size: 8),
+                          SizedBox(width: 4),
+                          Text('REPLAY 4K', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900)),
+                        ],
+                      ),
+                    ),
+                    Text(
+                      _goalMessage,
+                      style: const TextStyle(color: Color(0xFF00FFCC), fontWeight: FontWeight.w900, fontSize: 16, letterSpacing: 2),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(color: const Color(0xFFFFD166), borderRadius: BorderRadius.circular(6)),
+                      child: Text(
+                        '${scorer.overallRating} OVR',
+                        style: const TextStyle(color: Colors.black, fontSize: 9, fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                // Rendu 3D Photoréaliste du Buteur
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    height: 220,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: Colors.black38,
+                      border: Border.all(color: Colors.white12),
+                    ),
+                    child: Stack(
+                      alignment: Alignment.center,
                       children: [
-                        const Icon(Icons.sports_soccer, color: Color(0xFF00FFCC), size: 68),
-                        const SizedBox(height: 12),
-                        Text(
-                          _goalMessage,
-                          style: const TextStyle(
-                            color: Color(0xFF00FFCC),
-                            fontSize: 36,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 3,
-                            shadows: [Shadow(color: Color(0xFF00FFCC), blurRadius: 24)],
+                        Image.asset(
+                          asset,
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          height: 220,
+                          errorBuilder: (context, error, stackTrace) => const Center(
+                            child: Icon(Icons.sports_soccer, size: 72, color: Color(0xFF00FFCC)),
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'BUT EXCEPTIONNEL DANS LA LUCARNE !',
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.9),
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.2,
+                        Positioned(
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
+                            decoration: const BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [Colors.transparent, Colors.black87],
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                              ),
+                            ),
+                            child: Text(
+                              '⭐ ${scorer.celebration.toUpperCase()}',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: Color(0xFFFFD166), fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1),
+                            ),
                           ),
                         ),
                       ],
                     ),
                   ),
                 ),
-              ),
-          ],
+                const SizedBox(height: 10),
+
+                // Identité du Joueur
+                Text(
+                  '#${scorer.number} ${scorer.name.toUpperCase()}',
+                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 1.5),
+                ),
+                const SizedBox(height: 2),
+                const Text(
+                  'BUT DE CLASSE MONDIALE • PES 2026 PRO',
+                  style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -1219,7 +1400,7 @@ class _FootballPitchPainter extends CustomPainter {
     canvas.save();
     canvas.rotate(headAngle);
 
-    // Cou & Tête sculptée
+    // Cou & Tête sculptée avec traits de visage réalistes
     canvas.drawCircle(const Offset(3.2, 0.0), 3.4, Paint()..color = p.skinTone);
     canvas.drawOval(
       const Rect.fromLTWH(1.5, -4.2, 7.8, 8.4),
@@ -1234,6 +1415,24 @@ class _FootballPitchPainter extends CustomPainter {
       true,
       hairPaint,
     );
+
+    // Yeux réalistes avec sclère blanche et pupille
+    final eyeWhite = Paint()..color = Colors.white;
+    final eyePupil = Paint()..color = const Color(0xFF1E1108);
+    // Œil gauche
+    canvas.drawOval(const Rect.fromLTWH(6.4, -2.8, 1.8, 1.3), eyeWhite);
+    canvas.drawCircle(const Offset(7.5, -2.1), 0.55, eyePupil);
+    // Œil droit
+    canvas.drawOval(const Rect.fromLTWH(6.4, 1.5, 1.8, 1.3), eyeWhite);
+    canvas.drawCircle(const Offset(7.5, 2.1), 0.55, eyePupil);
+
+    // Arête du nez
+    canvas.drawLine(const Offset(6.8, 0.0), const Offset(8.4, 0.0), Paint()..color = p.skinTone.withValues(alpha: 0.85)..strokeWidth = 1.0);
+    // Bouche déterminée
+    canvas.drawLine(const Offset(6.2, -1.0), const Offset(6.2, 1.0), Paint()..color = const Color(0xFF6B3A1E)..strokeWidth = 0.8);
+    // Oreilles gauche et droite
+    canvas.drawOval(const Rect.fromLTWH(3.2, -4.8, 1.8, 1.4), Paint()..color = p.skinTone);
+    canvas.drawOval(const Rect.fromLTWH(3.2, 3.4, 1.8, 1.4), Paint()..color = p.skinTone);
     canvas.restore();
 
     canvas.restore();

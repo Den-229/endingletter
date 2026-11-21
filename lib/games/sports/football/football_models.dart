@@ -22,6 +22,9 @@ class FootballPlayer {
   double animTime;
   final Color skinTone;
   final Color hairColor;
+  final String? avatarAsset;
+  final int overallRating;
+  final String celebration;
 
   FootballPlayer({
     required this.id,
@@ -40,6 +43,9 @@ class FootballPlayer {
     this.animTime = 0.0,
     this.skinTone = const Color(0xFFC68642),
     this.hairColor = const Color(0xFF1E140A),
+    this.avatarAsset,
+    this.overallRating = 85,
+    this.celebration = 'Glissade sur les genoux',
   });
 }
 
@@ -159,18 +165,18 @@ class FootballTeam {
         FootballPlayer(id: 3, name: 'Alaba', number: 4, role: PlayerRole.def, pos: const Offset(0.20, 0.70), homePos: const Offset(0.20, 0.70), defense: 1.1, skinTone: const Color(0xFF6A3B1B), hairColor: const Color(0xFF111111)),
         FootballPlayer(id: 4, name: 'Modric', number: 10, role: PlayerRole.mid, pos: const Offset(0.35, 0.35), homePos: const Offset(0.35, 0.35), speed: 1.05, shotPower: 1.05, skinTone: const Color(0xFFF8D7B0), hairColor: const Color(0xFF9E7835)),
         FootballPlayer(id: 5, name: 'Kroos', number: 8, role: PlayerRole.mid, pos: const Offset(0.35, 0.65), homePos: const Offset(0.35, 0.65), speed: 1.0, shotPower: 1.1, skinTone: const Color(0xFFFDE0C5), hairColor: const Color(0xFFCBB168)),
-        FootballPlayer(id: 6, name: 'Vinicius', number: 7, role: PlayerRole.fwd, pos: const Offset(0.48, 0.35), homePos: const Offset(0.48, 0.35), speed: 1.25, shotPower: 1.15, skinTone: const Color(0xFF5A3010), hairColor: const Color(0xFF111111)),
-        FootballPlayer(id: 7, name: 'Benzema', number: 9, role: PlayerRole.fwd, pos: const Offset(0.48, 0.65), homePos: const Offset(0.48, 0.65), speed: 1.1, shotPower: 1.3, skinTone: const Color(0xFFD29F74), hairColor: const Color(0xFF2A1C14)),
+        FootballPlayer(id: 6, name: 'Vinicius', number: 7, role: PlayerRole.fwd, pos: const Offset(0.48, 0.35), homePos: const Offset(0.48, 0.35), speed: 1.25, shotPower: 1.15, skinTone: const Color(0xFF5A3010), hairColor: const Color(0xFF111111), avatarAsset: 'assets/images/players/madrid_star_3d.jpg', overallRating: 92, celebration: 'Samba Dance aux Poteaux'),
+        FootballPlayer(id: 7, name: 'Benzema', number: 9, role: PlayerRole.fwd, pos: const Offset(0.48, 0.65), homePos: const Offset(0.48, 0.65), speed: 1.1, shotPower: 1.3, skinTone: const Color(0xFFD29F74), hairColor: const Color(0xFF2A1C14), overallRating: 90, celebration: 'Doigt vers le Ciel'),
       ];
     } else {
       return [
-        FootballPlayer(id: 1, name: 'Donnarumma', number: 1, role: PlayerRole.gk, pos: const Offset(0.94, 0.50), homePos: const Offset(0.94, 0.50), speed: 0.9, defense: 1.2, skinTone: const Color(0xFFF3CFB0), hairColor: const Color(0xFF2E1C12), facingAngle: math.pi),
-        FootballPlayer(id: 2, name: 'Marquinhos', number: 5, role: PlayerRole.def, pos: const Offset(0.80, 0.30), homePos: const Offset(0.80, 0.30), defense: 1.1, skinTone: const Color(0xFF7D4E24), hairColor: const Color(0xFF111111), facingAngle: math.pi),
-        FootballPlayer(id: 3, name: 'Hakimi', number: 2, role: PlayerRole.def, pos: const Offset(0.80, 0.70), homePos: const Offset(0.80, 0.70), defense: 1.1, skinTone: const Color(0xFFB67B46), hairColor: const Color(0xFF111111), facingAngle: math.pi),
-        FootballPlayer(id: 4, name: 'Verratti', number: 6, role: PlayerRole.mid, pos: const Offset(0.65, 0.35), homePos: const Offset(0.65, 0.35), speed: 1.0, shotPower: 1.0, skinTone: const Color(0xFFF5CFB0), hairColor: const Color(0xFF332015), facingAngle: math.pi),
-        FootballPlayer(id: 5, name: 'Vitinha', number: 17, role: PlayerRole.mid, pos: const Offset(0.65, 0.65), homePos: const Offset(0.65, 0.65), speed: 1.05, shotPower: 1.05, skinTone: const Color(0xFFEAC49D), hairColor: const Color(0xFF462E1C), facingAngle: math.pi),
-        FootballPlayer(id: 6, name: 'Mbappé', number: 10, role: PlayerRole.fwd, pos: const Offset(0.52, 0.35), homePos: const Offset(0.52, 0.35), speed: 1.3, shotPower: 1.25, skinTone: const Color(0xFF6F4320), hairColor: const Color(0xFF111111), facingAngle: math.pi),
-        FootballPlayer(id: 7, name: 'Neymar', number: 11, role: PlayerRole.fwd, pos: const Offset(0.52, 0.65), homePos: const Offset(0.52, 0.65), speed: 1.15, shotPower: 1.2, skinTone: const Color(0xFF966336), hairColor: const Color(0xFF22160E), facingAngle: math.pi),
+        FootballPlayer(id: 1, name: 'Donnarumma', number: 1, role: PlayerRole.gk, pos: const Offset(0.94, 0.50), homePos: const Offset(0.94, 0.50), speed: 0.9, defense: 1.2, skinTone: const Color(0xFFF3CFB0), hairColor: const Color(0xFF2E1C12), facingAngle: math.pi, overallRating: 89),
+        FootballPlayer(id: 2, name: 'Marquinhos', number: 5, role: PlayerRole.def, pos: const Offset(0.80, 0.30), homePos: const Offset(0.80, 0.30), defense: 1.1, skinTone: const Color(0xFF7D4E24), hairColor: const Color(0xFF111111), facingAngle: math.pi, overallRating: 88),
+        FootballPlayer(id: 3, name: 'Hakimi', number: 2, role: PlayerRole.def, pos: const Offset(0.80, 0.70), homePos: const Offset(0.80, 0.70), defense: 1.1, skinTone: const Color(0xFFB67B46), hairColor: const Color(0xFF111111), facingAngle: math.pi, overallRating: 87),
+        FootballPlayer(id: 4, name: 'Verratti', number: 6, role: PlayerRole.mid, pos: const Offset(0.65, 0.35), homePos: const Offset(0.65, 0.35), speed: 1.0, shotPower: 1.0, skinTone: const Color(0xFFF5CFB0), hairColor: const Color(0xFF332015), facingAngle: math.pi, overallRating: 88),
+        FootballPlayer(id: 5, name: 'Vitinha', number: 17, role: PlayerRole.mid, pos: const Offset(0.65, 0.65), homePos: const Offset(0.65, 0.65), speed: 1.05, shotPower: 1.05, skinTone: const Color(0xFFEAC49D), hairColor: const Color(0xFF462E1C), facingAngle: math.pi, overallRating: 86),
+        FootballPlayer(id: 6, name: 'Mbappé', number: 10, role: PlayerRole.fwd, pos: const Offset(0.52, 0.35), homePos: const Offset(0.52, 0.35), speed: 1.3, shotPower: 1.25, skinTone: const Color(0xFF6F4320), hairColor: const Color(0xFF111111), facingAngle: math.pi, avatarAsset: 'assets/images/players/striker_mbappe_3d.jpg', overallRating: 94, celebration: 'Glissade Bras Croisés'),
+        FootballPlayer(id: 7, name: 'Neymar', number: 11, role: PlayerRole.fwd, pos: const Offset(0.52, 0.65), homePos: const Offset(0.52, 0.65), speed: 1.15, shotPower: 1.2, skinTone: const Color(0xFF966336), hairColor: const Color(0xFF22160E), facingAngle: math.pi, overallRating: 91, celebration: 'Grimace & Danse'),
       ];
     }
   }
